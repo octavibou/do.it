@@ -1,9 +1,25 @@
 import { notFound } from "next/navigation";
 
-import { KanbanBoard } from "@/components/kanban-board";
 import { ConfigNotice } from "@/components/config-notice";
+import { KanbanBoard } from "@/components/kanban-board";
 import { getProjectBySlug, listTasksForProject } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
+
+async function loadBoard(slug: string) {
+  try {
+    const project = await getProjectBySlug(slug);
+    if (!project) {
+      return { ok: true as const, project: null, tasks: [] };
+    }
+    const tasks = await listTasksForProject(project.id);
+    return { ok: true as const, project, tasks };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : "Error desconocido",
+    };
+  }
+}
 
 export default async function ProjectPage({
   params,
@@ -14,30 +30,21 @@ export default async function ProjectPage({
     return <ConfigNotice />;
   }
 
-  try {
-    const project = await getProjectBySlug(slug);
-    if (!project) {
-      notFound();
-    }
-
-    const tasks = await listTasksForProject(project.id);
-
-    return (
-      <KanbanBoard
-        slug={project.slug}
-        projectId={project.id}
-        projectName={project.name}
-        bots={project.bots}
-        tasks={tasks}
-      />
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Error desconocido";
-    return (
-      <ConfigNotice
-        title="No se pudo abrir el tablero"
-        detail={message}
-      />
-    );
+  const result = await loadBoard(slug);
+  if (!result.ok) {
+    return <ConfigNotice title="No se pudo abrir el tablero" detail={result.error} />;
   }
+  if (!result.project) {
+    notFound();
+  }
+
+  return (
+    <KanbanBoard
+      slug={result.project.slug}
+      projectId={result.project.id}
+      projectName={result.project.name}
+      bots={result.project.bots}
+      tasks={result.tasks}
+    />
+  );
 }

@@ -278,6 +278,9 @@ export async function updateTask(
   if (nextStatus === "doing" && previous.status !== "doing") {
     patch.started_at = new Date().toISOString();
   }
+  if (nextStatus !== "doing") {
+    patch.webhook_error = null;
+  }
 
   const { data, error } = await supabase
     .from("tasks")

@@ -1,5 +1,6 @@
 "use client";
 
+/* eslint-disable react-hooks/refs -- @dnd-kit exposes node refs and listeners for render */
 import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
