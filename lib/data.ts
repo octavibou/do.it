@@ -8,6 +8,7 @@ import { incompleteBlockers } from "@/lib/task-rules";
 import type {
   AssigneeType,
   Bot,
+  BotTaskCreate,
   BotTaskPatch,
   Priority,
   Project,
@@ -739,6 +740,64 @@ export async function updateBotProjectTask(
   }
 
   await recordTaskEvents(events);
+  return task;
+}
+
+export async function createBotProjectTask(
+  projectId: string,
+  input: BotTaskCreate,
+  actor: string
+): Promise<TaskWithRelations> {
+  const title = input.title.trim();
+  const matches = await findDuplicateMatches(projectId, title);
+  if (matches.length > 0) {
+    throw new DuplicateTaskError(matches);
+  }
+
+  const supabase = createAdminClient();
+  const assignee = normalizeAssignee({
+    assigneeType: input.assigneeType,
+    botId: input.botId,
+  });
+
+  // Always inbox. Bot API create must not dispatch doing webhooks.
+  const { data, error } = await supabase
+    .from("tasks")
+    .insert({
+      project_id: projectId,
+      title,
+      description: input.description?.trim() || null,
+      status: "inbox",
+      ...assignee,
+      priority: input.priority ?? null,
+      due_at: input.dueAt ?? null,
+      started_at: null,
+    })
+    .select(TASK_SELECT)
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new DuplicateTaskError([]);
+    }
+    throw error;
+  }
+
+  const [task] = await attachDependencies([data as TaskRow]);
+  await recordTaskEvents([
+    {
+      taskId: task.id,
+      actor,
+      action: "create",
+      toValue: title,
+      meta: {
+        priority: task.priority,
+        assignee: formatAssigneeValue(task.assignee_type, task.bot_id),
+        due_at: task.due_at,
+      },
+    },
+  ]);
+
   return task;
 }
 

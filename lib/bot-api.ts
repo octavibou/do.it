@@ -1,4 +1,4 @@
-import type { Bot, BotTaskPatch, Priority, Project, TaskStatus } from "./types";
+import type { Bot, BotTaskCreate, BotTaskPatch, Priority, Project, TaskStatus, TaskSummary } from "./types";
 
 const TASK_STATUS_VALUES: readonly TaskStatus[] = ["inbox", "doing", "review", "done"];
 const PRIORITY_VALUES: readonly Priority[] = ["low", "medium", "high", "urgent"];
@@ -8,7 +8,7 @@ export type BotApiResult = {
   body: Record<string, unknown>;
 };
 
-export type { BotTaskPatch };
+export type { BotTaskCreate, BotTaskPatch };
 
 export type BotWithProject = Bot & { project: Project };
 
@@ -30,6 +30,11 @@ export type BotApiDeps = {
   listDoingTasksForBot: (botId: string) => Promise<unknown[]>;
   getTask: (taskId: string) => Promise<BotTaskRecord | null>;
   updateBotProjectTask: (taskId: string, patch: BotTaskPatch, actor: string) => Promise<unknown>;
+  createBotProjectTask: (
+    projectId: string,
+    input: BotTaskCreate,
+    actor: string
+  ) => Promise<unknown>;
 };
 
 const FORBIDDEN_PATCH_KEYS = new Set([
@@ -43,6 +48,33 @@ const FORBIDDEN_PATCH_KEYS = new Set([
 ]);
 
 const ALLOWED_PATCH_KEYS = new Set(["description", "title", "priority", "due_at", "dueAt"]);
+
+const FORBIDDEN_CREATE_KEYS = new Set([
+  "archived_at",
+  "archivedAt",
+  "project_id",
+  "projectId",
+  "id",
+  "started_at",
+  "startedAt",
+  "webhook_error",
+  "webhook_fired_at",
+  "created_at",
+  "updated_at",
+]);
+
+const ALLOWED_CREATE_KEYS = new Set([
+  "title",
+  "description",
+  "priority",
+  "due_at",
+  "dueAt",
+  "assignee_type",
+  "assigneeType",
+  "bot_id",
+  "botId",
+  "status",
+]);
 
 function jsonError(status: number, error: string): BotApiResult {
   return { status, body: { error } };
@@ -163,6 +195,110 @@ export function parseBotTaskPatch(body: unknown): { ok: true; patch: BotTaskPatc
   }
 
   return { ok: true, patch };
+}
+
+export function parseBotTaskCreate(
+  body: unknown,
+  botId: string
+): { ok: true; input: BotTaskCreate } | BotApiResult {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return jsonError(400, "JSON object required");
+  }
+
+  const record = body as Record<string, unknown>;
+  const keys = Object.keys(record);
+
+  const forbidden = keys.filter((key) => FORBIDDEN_CREATE_KEYS.has(key));
+  if (forbidden.length > 0) {
+    return jsonError(403, "Cannot set archived_at, project_id, or identity fields on create");
+  }
+
+  if (record.status !== undefined && record.status !== "inbox") {
+    return jsonError(403, "Cannot set status away from inbox on create");
+  }
+
+  const unknown = keys.filter((key) => !ALLOWED_CREATE_KEYS.has(key));
+  if (unknown.length > 0) {
+    return jsonError(400, `Unknown field: ${unknown.join(", ")}`);
+  }
+
+  if (typeof record.title !== "string" || record.title.trim() === "") {
+    return jsonError(400, "title must be a non-empty string");
+  }
+
+  if (record.due_at !== undefined && record.dueAt !== undefined) {
+    return jsonError(400, "Use due_at or dueAt, not both");
+  }
+
+  if (record.assignee_type !== undefined && record.assigneeType !== undefined) {
+    return jsonError(400, "Use assignee_type or assigneeType, not both");
+  }
+
+  if (record.bot_id !== undefined && record.botId !== undefined) {
+    return jsonError(400, "Use bot_id or botId, not both");
+  }
+
+  const input: BotTaskCreate = {
+    title: record.title,
+    assigneeType: "human",
+    botId: null,
+  };
+
+  if (record.description !== undefined) {
+    if (record.description !== null && typeof record.description !== "string") {
+      return jsonError(400, "description must be a string or null");
+    }
+    input.description = record.description === null ? null : record.description;
+  }
+
+  if (record.priority !== undefined) {
+    if (record.priority !== null && !PRIORITY_VALUES.includes(record.priority as Priority)) {
+      return jsonError(400, "Invalid priority");
+    }
+    input.priority = (record.priority as Priority | null) ?? null;
+  }
+
+  const dueValue = record.due_at !== undefined ? record.due_at : record.dueAt;
+  if (dueValue !== undefined) {
+    if (dueValue !== null && typeof dueValue !== "string") {
+      return jsonError(400, "due_at must be a string or null");
+    }
+    if (typeof dueValue === "string" && dueValue.trim() !== "" && Number.isNaN(Date.parse(dueValue))) {
+      return jsonError(400, "Invalid due_at");
+    }
+    input.dueAt = dueValue === null || (typeof dueValue === "string" && dueValue.trim() === "") ? null : dueValue;
+  }
+
+  const assigneeTypeRaw =
+    record.assignee_type !== undefined ? record.assignee_type : record.assigneeType;
+  const botIdRaw = record.bot_id !== undefined ? record.bot_id : record.botId;
+
+  if (assigneeTypeRaw !== undefined) {
+    if (assigneeTypeRaw !== "human" && assigneeTypeRaw !== "bot") {
+      return jsonError(400, "Invalid assignee_type");
+    }
+  }
+
+  if (botIdRaw !== undefined && botIdRaw !== null && typeof botIdRaw !== "string") {
+    return jsonError(400, "bot_id must be a string or null");
+  }
+
+  const requestedBotId = typeof botIdRaw === "string" ? botIdRaw : null;
+  if (requestedBotId && requestedBotId !== botId) {
+    return jsonError(403, "Cannot assign to another bot");
+  }
+
+  const wantsBot =
+    assigneeTypeRaw === "bot" || (assigneeTypeRaw === undefined && requestedBotId === botId);
+
+  if (wantsBot) {
+    input.assigneeType = "bot";
+    input.botId = botId;
+  } else if (requestedBotId) {
+    return jsonError(400, "human assignee cannot have bot_id");
+  }
+
+  return { ok: true, input };
 }
 
 export function taskBelongsToBotProject(
@@ -326,6 +462,55 @@ export async function handlePatchBotTask(input: {
       task,
     },
   };
+}
+
+export async function handlePostBotTask(input: {
+  botId: string;
+  body: unknown;
+  bearerOk?: boolean;
+  sessionOk?: boolean;
+  deps: Pick<BotApiDeps, "isSupabaseConfigured" | "getBot" | "createBotProjectTask">;
+}): Promise<BotApiResult> {
+  const context = await requireBot(input.botId, input, input.deps);
+  if (!("ok" in context)) {
+    return context;
+  }
+
+  const parsed = parseBotTaskCreate(input.body, context.bot.id);
+  if (!("ok" in parsed)) {
+    return parsed;
+  }
+
+  try {
+    const task = await input.deps.createBotProjectTask(
+      context.bot.project_id,
+      parsed.input,
+      botActor(context.bot.name)
+    );
+
+    return {
+      status: 201,
+      body: {
+        bot: serializeBot(context.bot),
+        task,
+      },
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "DuplicateTaskError") {
+      const duplicates =
+        "matches" in error && Array.isArray(error.matches)
+          ? (error.matches as TaskSummary[])
+          : [];
+      return {
+        status: 409,
+        body: {
+          error: error.message,
+          duplicates,
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 export function parseJsonBody(raw: string): { ok: true; body: unknown } | BotApiResult {

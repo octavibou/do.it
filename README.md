@@ -113,16 +113,21 @@ Auth de bots:
 Authorization: Bearer $BOT_API_TOKEN
 ```
 
-`:id` tiene que ser un bot real. El bot solo ve tareas de su `project_id`. No puede cambiar `status`, `assignee_type`, `bot_id` ni `archived_at`.
+`:id` tiene que ser un bot real. El bot solo ve y crea tareas de su `project_id`. No puede cambiar `status`, `assignee_type`, `bot_id` ni `archived_at` en PATCH. En CREATE el estado es siempre `inbox`.
 
 ```http
 GET /api/bots/:id/current
 GET /api/bots/:id/tasks?status=inbox,doing&include_archived=false
+POST /api/bots/:id/tasks
 GET /api/bots/:id/tasks/:taskId
 PATCH /api/bots/:id/tasks/:taskId
 ```
 
 `status` es opcional (lista separada por comas: `inbox|doing|review|done`). `include_archived` vale `false` por defecto.
+
+`POST` crea una tarea en el proyecto del bot. Campos JSON: `title` (obligatorio), `description`, `priority` (`low|medium|high|urgent`), `due_at` (ISO o `null`). Por defecto `status=inbox`, `assignee_type=human`, `bot_id=null`. Se puede asignar a **este** bot con `assignee_type=bot` y/o `bot_id` igual al `:id` del path. Rechaza `status` distinto de `inbox`, archivo, otro proyecto u otro bot. Escribe `task_events` con `action=create` y `actor=bot:<nombre>`. No dispara webhook `task.doing`.
+
+Si el título es muy parecido a una tarea abierta del mismo proyecto (misma regla anti-dup que la UI), responde **409** con `duplicates`. No hay `forceCreate` por API: usa GET/PATCH de la existente.
 
 `PATCH` acepta JSON `{ "description": "…" }` y, opcionalmente, `title`, `priority`, `due_at`. Escribe `task_events` con `action=update` y `actor=bot:<nombre>`.
 
@@ -135,6 +140,11 @@ TASK=10a00000-0000-4000-8000-000000000001
 
 curl -sS "$BASE/api/bots/$BOT/tasks?status=inbox,doing" \
   -H "Authorization: Bearer $BOT_API_TOKEN"
+
+curl -sS -X POST "$BASE/api/bots/$BOT/tasks" \
+  -H "Authorization: Bearer $BOT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Inbox desde Flow","description":"## Por qué\nEl bot crea la tarea.","priority":"medium"}'
 
 curl -sS -X PATCH "$BASE/api/bots/$BOT/tasks/$TASK" \
   -H "Authorization: Bearer $BOT_API_TOKEN" \

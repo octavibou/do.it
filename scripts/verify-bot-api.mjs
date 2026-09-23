@@ -7,12 +7,15 @@ import {
   handleGetBotTask,
   handleGetBotTasks,
   handlePatchBotTask,
+  handlePostBotTask,
+  parseBotTaskCreate,
   parseBotTaskPatch,
   parseJsonBody,
   parseTaskListQuery,
   taskBelongsToBotProject,
 } from "../lib/bot-api.ts";
 import { isBotApiPath, verifyBotApiToken, verifyBotBearer } from "../lib/auth-token.ts";
+import { DuplicateTaskError } from "../lib/errors.ts";
 
 const TOKEN = "bot-secret-token";
 const OTHER = "wrong-token";
@@ -88,6 +91,18 @@ function baseDeps(overrides = {}) {
       ...patch,
       description: patch.description ?? ownTask.description,
     }),
+    createBotProjectTask: async (projectId, input) => ({
+      ...ownTask,
+      id: "task-created",
+      project_id: projectId,
+      title: input.title,
+      description: input.description ?? null,
+      status: "inbox",
+      assignee_type: input.assigneeType,
+      bot_id: input.botId,
+      priority: input.priority ?? null,
+      due_at: input.dueAt ?? null,
+    }),
     ...overrides,
   };
 }
@@ -153,6 +168,46 @@ await withToken(TOKEN, () => {
   const okPatch = parseBotTaskPatch({ description: "nuevo cuerpo" });
   assert.equal(okPatch.ok, true);
   assert.equal(okPatch.patch.description, "nuevo cuerpo");
+
+  const createOk = parseBotTaskCreate({ title: "Nueva inbox" }, flow.id);
+  assert.equal(createOk.ok, true);
+  assert.equal(createOk.input.title, "Nueva inbox");
+  assert.equal(createOk.input.assigneeType, "human");
+  assert.equal(createOk.input.botId, null);
+
+  const createBotAssignee = parseBotTaskCreate(
+    { title: "Para Flow", assignee_type: "bot" },
+    flow.id
+  );
+  assert.equal(createBotAssignee.ok, true);
+  assert.equal(createBotAssignee.input.assigneeType, "bot");
+  assert.equal(createBotAssignee.input.botId, flow.id);
+
+  const createBotIdOnly = parseBotTaskCreate({ title: "Para Flow", bot_id: flow.id }, flow.id);
+  assert.equal(createBotIdOnly.ok, true);
+  assert.equal(createBotIdOnly.input.assigneeType, "bot");
+  assert.equal(createBotIdOnly.input.botId, flow.id);
+
+  const createOtherBot = parseBotTaskCreate(
+    { title: "Otro", assignee_type: "bot", bot_id: "728f5795-a9b8-4253-8ffd-4dbd25f57a0c" },
+    flow.id
+  );
+  assert.equal(createOtherBot.status, 403);
+
+  const createInboxStatus = parseBotTaskCreate({ title: "Ok", status: "inbox" }, flow.id);
+  assert.equal(createInboxStatus.ok, true);
+
+  const createDoing = parseBotTaskCreate({ title: "No", status: "doing" }, flow.id);
+  assert.equal(createDoing.status, 403);
+
+  const createArchived = parseBotTaskCreate(
+    { title: "No", archived_at: "2026-01-01T00:00:00.000Z" },
+    flow.id
+  );
+  assert.equal(createArchived.status, 403);
+
+  const createMissingTitle = parseBotTaskCreate({ description: "sin título" }, flow.id);
+  assert.equal(createMissingTitle.status, 400);
 
   const invalidJson = parseJsonBody("{");
   assert.equal(invalidJson.status, 400);
@@ -254,6 +309,92 @@ await withToken(TOKEN, async () => {
   assert.equal(listed.status, 200);
   assert.equal(listed.body.bot.name, "Flow");
   assert.equal(listed.body.tasks.length, 1);
+
+  const createUnauthorized = await handlePostBotTask({
+    botId: flow.id,
+    body: { title: "Inbox desde Flow" },
+    bearerOk: false,
+    deps: baseDeps(),
+  });
+  assert.equal(createUnauthorized.status, 401);
+
+  const missingBot = await handlePostBotTask({
+    botId: "missing-bot",
+    body: { title: "Inbox desde Flow" },
+    bearerOk: true,
+    deps: baseDeps(),
+  });
+  assert.equal(missingBot.status, 404);
+  assert.equal(missingBot.body.error, "Bot not found");
+
+  let created = null;
+  const createdOk = await handlePostBotTask({
+    botId: flow.id,
+    body: {
+      title: "Inbox desde Flow",
+      description: "Cuerpo markdown",
+      priority: "medium",
+    },
+    bearerOk: true,
+    deps: baseDeps({
+      createBotProjectTask: async (projectId, input, actor) => {
+        created = { projectId, input, actor };
+        return {
+          ...ownTask,
+          id: "task-created",
+          title: input.title,
+          description: input.description,
+          status: "inbox",
+          assignee_type: input.assigneeType,
+          bot_id: input.botId,
+          priority: input.priority,
+        };
+      },
+    }),
+  });
+  assert.equal(createdOk.status, 201, "create returns 201");
+  assert.equal(createdOk.body.task.status, "inbox");
+  assert.equal(createdOk.body.task.assignee_type, "human");
+  assert.equal(createdOk.body.task.bot_id, null);
+  assert.equal(createdOk.body.task.title, "Inbox desde Flow");
+  assert.equal(created.projectId, flow.project_id);
+  assert.equal(created.actor, "bot:Flow");
+  assert.equal(created.input.assigneeType, "human");
+  assert.equal(created.input.botId, null);
+
+  const createdForBot = await handlePostBotTask({
+    botId: flow.id,
+    body: { title: "Para Flow", assignee_type: "bot" },
+    bearerOk: true,
+    deps: baseDeps(),
+  });
+  assert.equal(createdForBot.status, 201);
+  assert.equal(createdForBot.body.task.assignee_type, "bot");
+  assert.equal(createdForBot.body.task.bot_id, flow.id);
+  assert.equal(createdForBot.body.task.status, "inbox");
+
+  const createStatusRejected = await handlePostBotTask({
+    botId: flow.id,
+    body: { title: "No", status: "doing" },
+    bearerOk: true,
+    deps: baseDeps(),
+  });
+  assert.equal(createStatusRejected.status, 403);
+
+  const createDup = await handlePostBotTask({
+    botId: flow.id,
+    body: { title: "Revisar leads" },
+    bearerOk: true,
+    deps: baseDeps({
+      createBotProjectTask: async () => {
+        throw new DuplicateTaskError([
+          { id: ownTask.id, title: ownTask.title, status: "inbox", archived_at: null },
+        ]);
+      },
+    }),
+  });
+  assert.equal(createDup.status, 409);
+  assert.equal(createDup.body.duplicates.length, 1);
 });
 
 console.log("bot api ok");
