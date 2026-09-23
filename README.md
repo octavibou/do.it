@@ -10,6 +10,7 @@ Backlog único de Octavi: proyectos, humanos y bots. Sustituye webhooks de Notio
 - Vista de trabajo de cada bot (tareas **En curso**)
 - Webhook al pasar a En curso si el asignado es un bot
 - Auth mínima: contraseña compartida (`APP_PASSWORD`)
+- Bot API: listar y actualizar `description` con `Authorization: Bearer <BOT_API_TOKEN>`
 
 ## v2 (campos must-have)
 
@@ -38,6 +39,7 @@ Variables (no commitear secretos):
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | clave anon (auth/cliente; el hub no lee datos con ella) |
 | `SUPABASE_SERVICE_ROLE_KEY` | servidor: Server Actions y Route Handlers |
 | `APP_PASSWORD` | contraseña única de la app |
+| `BOT_API_TOKEN` | secreto compartido para la Bot API (Bearer). No hace falta cookie |
 
 Aplica las migraciones en el editor SQL del proyecto Supabase `bxvhabbuxwsdwpfeklfc` (otra cuenta; este repo no puede alcanzarla):
 
@@ -58,6 +60,8 @@ Las URL de webhook empiezan vacías. Edítalas en **Ajustes**.
 ## Auth
 
 No hay registro. Octavi entra en `/login` con `APP_PASSWORD`. La sesión es una cookie httpOnly firmada con HMAC. Sin esa variable, la app no queda abierta en internet: el login no acepta nadie.
+
+Los bots (Flow, Home, Mint, Dial) llaman `/api/bots/*` con `Authorization: Bearer $BOT_API_TOKEN` (secreto compartido en Vercel; no se muestra en Ajustes). No hace falta cookie. `GET /api/bots/:id/current` también acepta la cookie de sesión.
 
 Los datos de negocio solo se leen/escriben en el servidor con la service role. RLS está activo y no hay policies para el cliente.
 
@@ -101,15 +105,46 @@ Si el POST va bien, se limpia el error y se guarda `webhook_fired_at`.
 
 ## API
 
-Todas las rutas (menos `/login`) exigen cookie de sesión.
+La UI (y `GET /api/bots/:id/current` como alternativa) sigue usando la cookie de sesión. Las rutas `/api/bots/*` también aceptan Bearer sin cookie.
+
+Auth de bots:
+
+```http
+Authorization: Bearer $BOT_API_TOKEN
+```
+
+`:id` tiene que ser un bot real. El bot solo ve tareas de su `project_id`. No puede cambiar `status`, `assignee_type`, `bot_id` ni `archived_at`.
 
 ```http
 GET /api/bots/:id/current
+GET /api/bots/:id/tasks?status=inbox,doing&include_archived=false
+GET /api/bots/:id/tasks/:taskId
+PATCH /api/bots/:id/tasks/:taskId
 ```
 
-Respuesta: el bot y sus tareas en `doing`.
+`status` es opcional (lista separada por comas: `inbox|doing|review|done`). `include_archived` vale `false` por defecto.
 
-El resto del CRUD va por Server Actions (`app/actions`).
+`PATCH` acepta JSON `{ "description": "…" }` y, opcionalmente, `title`, `priority`, `due_at`. Escribe `task_events` con `action=update` y `actor=bot:<nombre>`.
+
+Ejemplos:
+
+```bash
+BASE=https://tu-dominio.vercel.app
+BOT=7d765d6a-63aa-4d4d-9914-0b3d26dee739   # Flow / Leadflow
+TASK=10a00000-0000-4000-8000-000000000001
+
+curl -sS "$BASE/api/bots/$BOT/tasks?status=inbox,doing" \
+  -H "Authorization: Bearer $BOT_API_TOKEN"
+
+curl -sS -X PATCH "$BASE/api/bots/$BOT/tasks/$TASK" \
+  -H "Authorization: Bearer $BOT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"description":"## Por qué\nActualizar el cuerpo desde Flow."}'
+```
+
+`GET /api/bots/:id/current` sigue devolviendo el bot y sus tareas en `doing` (Bearer o cookie).
+
+El resto del CRUD de la UI va por Server Actions (`app/actions`).
 
 ## Deploy (Vercel)
 

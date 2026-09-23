@@ -62,3 +62,39 @@ export function verifySessionToken(token: string | undefined | null): boolean {
   const exp = Number(payload);
   return Number.isFinite(exp) && exp > Date.now();
 }
+
+function getBotApiToken(): string | null {
+  const value = process.env.BOT_API_TOKEN;
+  return value && value.length > 0 ? value : null;
+}
+
+export function isBotApiConfigured(): boolean {
+  return getBotApiToken() !== null;
+}
+
+export function extractBearerToken(authorization: string | null | undefined): string | null {
+  if (!authorization) {
+    return null;
+  }
+  const match = authorization.match(/^Bearer\s+(\S+)/i);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
+export function verifyBotApiToken(candidate: string | undefined | null): boolean {
+  const expected = getBotApiToken();
+  if (!expected || !candidate) {
+    return false;
+  }
+  return safeEqual(candidate, expected);
+}
+
+export function verifyBotBearer(authorization: string | null | undefined): boolean {
+  return verifyBotApiToken(extractBearerToken(authorization));
+}
+
+export function isBotApiPath(pathname: string): boolean {
+  return pathname === "/api/bots" || pathname.startsWith("/api/bots/");
+}

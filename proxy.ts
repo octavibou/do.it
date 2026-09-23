@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth-token";
+import {
+  SESSION_COOKIE,
+  isBotApiPath,
+  verifyBotBearer,
+  verifySessionToken,
+} from "@/lib/auth-token";
 
 const PUBLIC_PATHS = new Set(["/login"]);
 
@@ -10,6 +15,7 @@ export function proxy(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.has(pathname);
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const authenticated = verifySessionToken(token);
+  const botAuthorized = isBotApiPath(pathname) && verifyBotBearer(request.headers.get("authorization"));
 
   if (isPublic) {
     if (authenticated && pathname === "/login") {
@@ -18,7 +24,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!authenticated) {
+  if (!authenticated && !botAuthorized) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
