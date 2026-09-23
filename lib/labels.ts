@@ -1,3 +1,4 @@
+import type { TaskSortMode } from "@/lib/task-rules";
 import type { AssigneeType, Priority, TaskEventAction, TaskStatus } from "@/lib/types";
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -22,6 +23,12 @@ export const PRIORITY_LABELS: Record<Priority, string> = {
 };
 
 export const PRIORITY_ORDER: Priority[] = ["urgent", "high", "medium", "low"];
+
+export const TASK_SORT_LABELS: Record<TaskSortMode, string> = {
+  priority: "Por prioridad",
+  created_desc: "Por creación (más recientes primero)",
+  created_asc: "Por creación (más antiguas primero)",
+};
 
 export const EVENT_ACTION_LABELS: Record<TaskEventAction, string> = {
   create: "Creación",

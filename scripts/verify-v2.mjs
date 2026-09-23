@@ -5,6 +5,8 @@ import { PRIORITY_LABELS } from "../lib/labels.ts";
 import {
   canEnterDoing,
   compareTasks,
+  formatCreatedAt,
+  formatCreatedAtFull,
   incompleteBlockers,
   isOverdue,
   isShortBody,
@@ -42,6 +44,32 @@ assert.deepEqual(
   ["urgent:none", "high:2026-02-01T00:00:00.000Z", "high:2026-02-02T00:00:00.000Z", "low:none"]
 );
 assert.ok(compareTasks(sorted[0], sorted[1]) < 0);
+
+const byCreated = [
+  { priority: "low", due_at: null, created_at: "2026-01-02T00:00:00.000Z", title: "mid" },
+  { priority: "urgent", due_at: null, created_at: "2026-01-03T00:00:00.000Z", title: "newest" },
+  { priority: "high", due_at: "2026-02-01T00:00:00.000Z", created_at: "2026-01-01T00:00:00.000Z", title: "oldest" },
+];
+assert.deepEqual(
+  sortTasks(byCreated, "created_desc").map((task) => task.title),
+  ["newest", "mid", "oldest"]
+);
+assert.deepEqual(
+  sortTasks(byCreated, "created_asc").map((task) => task.title),
+  ["oldest", "mid", "newest"]
+);
+assert.deepEqual(
+  sortTasks(byCreated, "priority").map((task) => task.title),
+  ["newest", "oldest", "mid"]
+);
+
+const madridNow = Date.parse("2026-09-23T12:00:00.000Z");
+assert.equal(formatCreatedAt("2026-09-23T08:00:00.000Z", madridNow), "hoy");
+assert.equal(formatCreatedAt("2026-09-22T10:00:00.000Z", madridNow), "ayer");
+assert.equal(formatCreatedAt("2026-09-21T10:00:00.000Z", madridNow), "hace 2 días");
+assert.match(formatCreatedAt("2026-09-01T10:00:00.000Z", madridNow), /1\s+sept?/);
+assert.match(formatCreatedAt("2025-09-01T10:00:00.000Z", madridNow), /2025/);
+assert.match(formatCreatedAtFull("2026-09-23T08:00:00.000Z"), /2026/);
 
 const blockers = incompleteBlockers([
   { id: "a", title: "A", status: "done", archived_at: null },

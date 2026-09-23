@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { retryWebhookAction, updateTaskPriorityAction } from "@/app/actions/tasks";
 import { AssigneeBadge } from "@/components/assignee-badge";
+import { CreatedBadge } from "@/components/created-badge";
 import { DueBadge } from "@/components/due-badge";
 import { PriorityBadge } from "@/components/priority-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -100,6 +101,7 @@ export function TaskCard({
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <AssigneeBadge type={task.assignee_type} botName={task.bot?.name} />
         <PriorityBadge priority={task.priority} />
+        <CreatedBadge createdAt={task.created_at} />
         <DueBadge dueAt={task.due_at} status={task.status} />
         {blocked.length > 0 ? (
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
