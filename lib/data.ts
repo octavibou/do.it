@@ -8,6 +8,7 @@ import { incompleteBlockers } from "@/lib/task-rules";
 import type {
   AssigneeType,
   Bot,
+  BotTaskPatch,
   Priority,
   Project,
   ProjectWithBot,
@@ -200,6 +201,29 @@ export async function listTasksForProject(projectId: string): Promise<TaskWithRe
     .select(TASK_SELECT)
     .eq("project_id", projectId)
     .order("created_at", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return attachDependencies((data ?? []) as TaskRow[]);
+}
+
+export async function listProjectTasks(
+  projectId: string,
+  options: { statuses?: TaskStatus[]; includeArchived?: boolean } = {}
+): Promise<TaskWithRelations[]> {
+  const supabase = createAdminClient();
+  let query = supabase.from("tasks").select(TASK_SELECT).eq("project_id", projectId);
+
+  if (!options.includeArchived) {
+    query = query.is("archived_at", null);
+  }
+  if (options.statuses && options.statuses.length > 0) {
+    query = query.in("status", options.statuses);
+  }
+
+  const { data, error } = await query.order("created_at", { ascending: true });
 
   if (error) {
     throw error;
@@ -623,6 +647,99 @@ export async function updateTask(
   await recordTaskEvents(collectUpdateEvents(asTask(previous), asTask(task)));
   const webhookError = await maybeFireWebhook(task, previous);
   return { task, webhookError };
+}
+
+export async function updateBotProjectTask(
+  taskId: string,
+  input: BotTaskPatch,
+  actor: string
+): Promise<TaskWithRelations> {
+  const supabase = createAdminClient();
+  const { data: existing, error: existingError } = await supabase
+    .from("tasks")
+    .select(TASK_SELECT)
+    .eq("id", taskId)
+    .single();
+
+  if (existingError) {
+    throw existingError;
+  }
+
+  const previous = existing as TaskRow;
+  const patch: Record<string, unknown> = {};
+
+  if (input.title !== undefined) {
+    patch.title = input.title.trim();
+  }
+  if (input.description !== undefined) {
+    patch.description = input.description?.trim() || null;
+  }
+  if (input.priority !== undefined) {
+    patch.priority = input.priority;
+  }
+  if (input.dueAt !== undefined) {
+    patch.due_at = input.dueAt;
+  }
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .update(patch)
+    .eq("id", taskId)
+    .select(TASK_SELECT)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  const [task] = await attachDependencies([data as TaskRow]);
+  const next = asTask(task);
+  const prev = asTask(previous);
+  const events: EventInput[] = [];
+
+  if (input.title !== undefined && prev.title !== next.title) {
+    events.push({
+      taskId,
+      actor,
+      action: "update",
+      fromValue: prev.title,
+      toValue: next.title,
+      meta: { field: "title" },
+    });
+  }
+  if (input.description !== undefined && (prev.description ?? "") !== (next.description ?? "")) {
+    events.push({
+      taskId,
+      actor,
+      action: "update",
+      fromValue: prev.description,
+      toValue: next.description,
+      meta: { field: "description" },
+    });
+  }
+  if (input.priority !== undefined && prev.priority !== next.priority) {
+    events.push({
+      taskId,
+      actor,
+      action: "update",
+      fromValue: prev.priority,
+      toValue: next.priority,
+      meta: { field: "priority" },
+    });
+  }
+  if (input.dueAt !== undefined && (prev.due_at ?? null) !== (next.due_at ?? null)) {
+    events.push({
+      taskId,
+      actor,
+      action: "update",
+      fromValue: prev.due_at,
+      toValue: next.due_at,
+      meta: { field: "due_at" },
+    });
+  }
+
+  await recordTaskEvents(events);
+  return task;
 }
 
 export async function moveTask(

@@ -45,6 +45,10 @@ export default async function SettingsPage() {
           hace POST JSON a esta URL. Si falla, la tarea se queda en En curso y verás el
           error en la tarjeta.
         </p>
+        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+          Las llamadas de bots a la API usan el secreto <code>BOT_API_TOKEN</code> en
+          Vercel. No se muestra aquí.
+        </p>
       </div>
       <SettingsForm bots={result.bots} />
     </div>

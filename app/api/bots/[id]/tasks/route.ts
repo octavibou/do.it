@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth";
 import { verifyBotBearer } from "@/lib/auth-token";
-import { handleGetBotCurrent } from "@/lib/bot-api";
-import { getBot, listDoingTasksForBot } from "@/lib/data";
+import { handleGetBotTasks } from "@/lib/bot-api";
+import { getBot, listProjectTasks } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +13,12 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
-  const result = await handleGetBotCurrent({
+  const result = await handleGetBotTasks({
     botId: id,
+    searchParams: new URL(request.url).searchParams,
     bearerOk: verifyBotBearer(request.headers.get("authorization")),
     sessionOk: await getSession(),
-    deps: { isSupabaseConfigured, getBot, listDoingTasksForBot },
+    deps: { isSupabaseConfigured, getBot, listProjectTasks },
   });
   return NextResponse.json(result.body, { status: result.status });
 }

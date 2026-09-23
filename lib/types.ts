@@ -67,6 +67,13 @@ export type TaskWithRelations = Task & {
   blocks: TaskSummary[];
 };
 
+export type BotTaskPatch = {
+  title?: string;
+  description?: string | null;
+  priority?: Priority | null;
+  dueAt?: string | null;
+};
+
 export type TaskEvent = {
   id: string;
   task_id: string;
