@@ -32,7 +32,12 @@ export default async function ProjectPage({
 
   const result = await loadBoard(slug);
   if (!result.ok) {
-    return <ConfigNotice title="No se pudo abrir el tablero" detail={result.error} />;
+    return (
+      <ConfigNotice
+        title="No se pudo abrir el tablero"
+        detail={`Si faltan columnas nuevas, aplica supabase/migrations/002_v2_must_have.sql. Detalle: ${result.error}`}
+      />
+    );
   }
   if (!result.project) {
     notFound();

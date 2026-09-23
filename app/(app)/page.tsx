@@ -15,7 +15,7 @@ async function loadCounts(projectIds: string[]) {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("tasks")
-    .select("project_id, status")
+    .select("project_id, status, archived_at")
     .in("project_id", projectIds);
 
   if (error) {
@@ -24,6 +24,9 @@ async function loadCounts(projectIds: string[]) {
 
   const counts: Record<string, Record<TaskStatus, number>> = {};
   for (const row of data ?? []) {
+    if (row.archived_at) {
+      continue;
+    }
     const projectId = row.project_id as string;
     const status = row.status as TaskStatus;
     counts[projectId] ??= { inbox: 0, doing: 0, review: 0, done: 0 };
@@ -62,7 +65,7 @@ export default async function ProjectsPage() {
         <h1 className="text-2xl font-medium tracking-tight">Proyectos</h1>
         <ConfigNotice
           title="No se pudo leer Supabase"
-          detail={`Aplica supabase/migrations/001_init.sql. Detalle: ${result.error}`}
+          detail={`Aplica supabase/migrations/001_init.sql y 002_v2_must_have.sql. Detalle: ${result.error}`}
         />
       </div>
     );

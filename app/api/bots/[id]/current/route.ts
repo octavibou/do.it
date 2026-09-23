@@ -24,6 +24,7 @@ export async function GET(
     return NextResponse.json({ error: "Bot not found" }, { status: 404 });
   }
 
+  // Read-only: bots cannot change status through this endpoint.
   const tasks = await listDoingTasksForBot(id);
 
   return NextResponse.json({
