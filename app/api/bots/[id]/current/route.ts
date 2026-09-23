@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth";
+import { verifyBotBearer } from "@/lib/auth-token";
 import { handleGetBotCurrent } from "@/lib/bot-api";
 import { getBot, listDoingTasksForBot } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
@@ -14,7 +15,7 @@ export async function GET(
   const { id } = await context.params;
   const result = await handleGetBotCurrent({
     botId: id,
-    authorization: request.headers.get("authorization"),
+    bearerOk: verifyBotBearer(request.headers.get("authorization")),
     sessionOk: await getSession(),
     deps: { isSupabaseConfigured, getBot, listDoingTasksForBot },
   });

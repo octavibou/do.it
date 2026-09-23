@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth";
+import { verifyBotBearer } from "@/lib/auth-token";
 import { handleGetBotTask, handlePatchBotTask, parseJsonBody } from "@/lib/bot-api";
 import { getBot, getTask, updateBotProjectTask } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
@@ -12,10 +13,11 @@ export async function GET(
   context: { params: Promise<{ id: string; taskId: string }> }
 ) {
   const { id, taskId } = await context.params;
+  const bearerOk = verifyBotBearer(request.headers.get("authorization"));
   const result = await handleGetBotTask({
     botId: id,
     taskId,
-    authorization: request.headers.get("authorization"),
+    bearerOk,
     sessionOk: await getSession(),
     deps: { isSupabaseConfigured, getBot, getTask },
   });
@@ -27,6 +29,7 @@ export async function PATCH(
   context: { params: Promise<{ id: string; taskId: string }> }
 ) {
   const { id, taskId } = await context.params;
+  const bearerOk = verifyBotBearer(request.headers.get("authorization"));
   const parsed = parseJsonBody(await request.text());
   if (!("ok" in parsed)) {
     return NextResponse.json(parsed.body, { status: parsed.status });
@@ -36,7 +39,7 @@ export async function PATCH(
     botId: id,
     taskId,
     body: parsed.body,
-    authorization: request.headers.get("authorization"),
+    bearerOk,
     sessionOk: await getSession(),
     deps: { isSupabaseConfigured, getBot, getTask, updateBotProjectTask },
   });

@@ -1,6 +1,7 @@
-import { extractBearerToken, verifyBotApiToken, verifyBotBearer } from "./auth-token";
 import type { Bot, BotTaskPatch, Priority, Project, TaskStatus } from "./types";
-import { PRIORITIES, TASK_STATUSES } from "./types";
+
+const TASK_STATUS_VALUES: readonly TaskStatus[] = ["inbox", "doing", "review", "done"];
+const PRIORITY_VALUES: readonly Priority[] = ["low", "medium", "high", "urgent"];
 
 export type BotApiResult = {
   status: number;
@@ -52,10 +53,10 @@ export function botActor(name: string): string {
 }
 
 export function authorizeBotApi(input: {
-  authorization?: string | null;
+  bearerOk?: boolean;
   sessionOk?: boolean;
 }): BotApiResult | { ok: true; via: "bearer" | "session" } {
-  if (verifyBotBearer(input.authorization)) {
+  if (input.bearerOk) {
     return { ok: true, via: "bearer" };
   }
   if (input.sessionOk) {
@@ -75,7 +76,7 @@ export function parseTaskListQuery(searchParams: URLSearchParams):
       .split(",")
       .map((part) => part.trim())
       .filter(Boolean);
-    const invalid = parts.filter((part) => !TASK_STATUSES.includes(part as TaskStatus));
+    const invalid = parts.filter((part) => !TASK_STATUS_VALUES.includes(part as TaskStatus));
     if (invalid.length > 0) {
       return jsonError(400, `Invalid status: ${invalid.join(", ")}`);
     }
@@ -140,7 +141,7 @@ export function parseBotTaskPatch(body: unknown): { ok: true; patch: BotTaskPatc
   }
 
   if (record.priority !== undefined) {
-    if (record.priority !== null && !PRIORITIES.includes(record.priority as Priority)) {
+    if (record.priority !== null && !PRIORITY_VALUES.includes(record.priority as Priority)) {
       return jsonError(400, "Invalid priority");
     }
     patch.priority = (record.priority as Priority | null) ?? null;
@@ -186,7 +187,7 @@ function serializeBot(bot: BotWithProject) {
 
 async function requireBot(
   botId: string,
-  input: { authorization?: string | null; sessionOk?: boolean },
+  input: { bearerOk?: boolean; sessionOk?: boolean },
   deps: Pick<BotApiDeps, "isSupabaseConfigured" | "getBot">
 ): Promise<{ ok: true; bot: BotWithProject } | BotApiResult> {
   const auth = authorizeBotApi(input);
@@ -209,7 +210,7 @@ async function requireBot(
 async function requireBotTask(
   botId: string,
   taskId: string,
-  input: { authorization?: string | null; sessionOk?: boolean },
+  input: { bearerOk?: boolean; sessionOk?: boolean },
   deps: Pick<BotApiDeps, "isSupabaseConfigured" | "getBot" | "getTask">
 ): Promise<{ ok: true; bot: BotWithProject; task: BotTaskRecord } | BotApiResult> {
   const context = await requireBot(botId, input, deps);
@@ -227,7 +228,7 @@ async function requireBotTask(
 
 export async function handleGetBotCurrent(input: {
   botId: string;
-  authorization?: string | null;
+  bearerOk?: boolean;
   sessionOk?: boolean;
   deps: Pick<BotApiDeps, "isSupabaseConfigured" | "getBot" | "listDoingTasksForBot">;
 }): Promise<BotApiResult> {
@@ -249,7 +250,7 @@ export async function handleGetBotCurrent(input: {
 export async function handleGetBotTasks(input: {
   botId: string;
   searchParams: URLSearchParams;
-  authorization?: string | null;
+  bearerOk?: boolean;
   sessionOk?: boolean;
   deps: Pick<BotApiDeps, "isSupabaseConfigured" | "getBot" | "listProjectTasks">;
 }): Promise<BotApiResult> {
@@ -276,7 +277,7 @@ export async function handleGetBotTasks(input: {
 export async function handleGetBotTask(input: {
   botId: string;
   taskId: string;
-  authorization?: string | null;
+  bearerOk?: boolean;
   sessionOk?: boolean;
   deps: Pick<BotApiDeps, "isSupabaseConfigured" | "getBot" | "getTask">;
 }): Promise<BotApiResult> {
@@ -298,7 +299,7 @@ export async function handlePatchBotTask(input: {
   botId: string;
   taskId: string;
   body: unknown;
-  authorization?: string | null;
+  bearerOk?: boolean;
   sessionOk?: boolean;
   deps: Pick<BotApiDeps, "isSupabaseConfigured" | "getBot" | "getTask" | "updateBotProjectTask">;
 }): Promise<BotApiResult> {
@@ -337,5 +338,3 @@ export function parseJsonBody(raw: string): { ok: true; body: unknown } | BotApi
     return jsonError(400, "Invalid JSON");
   }
 }
-
-export { extractBearerToken, verifyBotApiToken, verifyBotBearer };

@@ -11,10 +11,8 @@ import {
   parseJsonBody,
   parseTaskListQuery,
   taskBelongsToBotProject,
-  verifyBotApiToken,
-  verifyBotBearer,
 } from "../lib/bot-api.ts";
-import { isBotApiPath } from "../lib/auth-token.ts";
+import { isBotApiPath, verifyBotApiToken, verifyBotBearer } from "../lib/auth-token.ts";
 
 const TOKEN = "bot-secret-token";
 const OTHER = "wrong-token";
@@ -112,11 +110,15 @@ await withToken(TOKEN, () => {
   assert.equal(verifyBotBearer(TOKEN), false);
   assert.equal(verifyBotBearer(null), false);
 
-  const authFail = authorizeBotApi({ authorization: `Bearer ${OTHER}` });
+  const authFail = authorizeBotApi({
+    bearerOk: verifyBotBearer(`Bearer ${OTHER}`),
+  });
   assert.equal(authFail.status, 401);
   assert.equal(authFail.body.error, "Unauthorized");
 
-  const authOk = authorizeBotApi({ authorization: `Bearer ${TOKEN}` });
+  const authOk = authorizeBotApi({
+    bearerOk: verifyBotBearer(`Bearer ${TOKEN}`),
+  });
   assert.equal(authOk.ok, true);
   assert.equal(authOk.via, "bearer");
 
@@ -160,7 +162,7 @@ await withToken(TOKEN, async () => {
   const unauthorized = await handleGetBotTasks({
     botId: flow.id,
     searchParams: new URLSearchParams(),
-    authorization: "Bearer nope",
+    bearerOk: false,
     deps: baseDeps(),
   });
   assert.equal(unauthorized.status, 401, "auth failure");
@@ -170,14 +172,14 @@ await withToken(TOKEN, async () => {
     botId: flow.id,
     taskId: ownTask.id,
     body: { description: "x" },
-    authorization: null,
+    bearerOk: false,
     deps: baseDeps(),
   });
   assert.equal(patchUnauthorized.status, 401, "auth failure");
 
   const currentUnauthorized = await handleGetBotCurrent({
     botId: flow.id,
-    authorization: null,
+    bearerOk: false,
     sessionOk: false,
     deps: baseDeps(),
   });
@@ -185,7 +187,7 @@ await withToken(TOKEN, async () => {
 
   const currentWithSession = await handleGetBotCurrent({
     botId: flow.id,
-    authorization: null,
+    bearerOk: false,
     sessionOk: true,
     deps: baseDeps(),
   });
@@ -194,7 +196,7 @@ await withToken(TOKEN, async () => {
   const crossProject = await handleGetBotTask({
     botId: flow.id,
     taskId: foreignTask.id,
-    authorization: `Bearer ${TOKEN}`,
+    bearerOk: true,
     deps: baseDeps(),
   });
   assert.equal(crossProject.status, 404, "cross-project 404");
@@ -203,7 +205,7 @@ await withToken(TOKEN, async () => {
   const missingTask = await handleGetBotTask({
     botId: flow.id,
     taskId: "missing",
-    authorization: `Bearer ${TOKEN}`,
+    bearerOk: true,
     deps: baseDeps(),
   });
   assert.equal(missingTask.status, 404);
@@ -212,7 +214,7 @@ await withToken(TOKEN, async () => {
     botId: flow.id,
     taskId: ownTask.id,
     body: { status: "done" },
-    authorization: `Bearer ${TOKEN}`,
+    bearerOk: true,
     deps: baseDeps(),
   });
   assert.equal(statusRejected.status, 403, "status patch rejected");
@@ -222,7 +224,7 @@ await withToken(TOKEN, async () => {
     botId: flow.id,
     taskId: ownTask.id,
     body: { description: "Cuerpo desde Flow" },
-    authorization: `Bearer ${TOKEN}`,
+    bearerOk: true,
     deps: baseDeps({
       updateBotProjectTask: async (taskId, patch, actor) => {
         updated = { taskId, patch, actor };
@@ -239,7 +241,7 @@ await withToken(TOKEN, async () => {
   const listed = await handleGetBotTasks({
     botId: flow.id,
     searchParams: new URLSearchParams("status=inbox,doing"),
-    authorization: `Bearer ${TOKEN}`,
+    bearerOk: true,
     deps: baseDeps({
       listProjectTasks: async (projectId, filters) => {
         assert.equal(projectId, flow.project_id);
