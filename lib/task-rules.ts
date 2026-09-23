@@ -41,6 +41,33 @@ export function canEnterDoing(blockedBy: TaskSummary[], overrideStart = false): 
   return overrideStart || incompleteBlockers(blockedBy).length === 0;
 }
 
+export const TASK_SORT_MODES = ["priority", "created_desc", "created_asc"] as const;
+export type TaskSortMode = (typeof TASK_SORT_MODES)[number];
+
+export const MADRID_TIME_ZONE = "Europe/Madrid";
+
+function madridCalendarDay(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: MADRID_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function calendarDaysBetween(from: Date, to: Date): number {
+  const fromDay = Date.parse(`${madridCalendarDay(from)}T00:00:00Z`);
+  const toDay = Date.parse(`${madridCalendarDay(to)}T00:00:00Z`);
+  return Math.round((toDay - fromDay) / 86_400_000);
+}
+
+export function compareCreatedAt(a: Pick<SortableTask, "created_at">, b: Pick<SortableTask, "created_at">): number {
+  if (a.created_at === b.created_at) {
+    return 0;
+  }
+  return a.created_at < b.created_at ? -1 : 1;
+}
+
 export function compareTasks(a: SortableTask, b: SortableTask): number {
   const aRank = a.priority ? PRIORITY_RANK[a.priority] : 4;
   const bRank = b.priority ? PRIORITY_RANK[b.priority] : 4;
@@ -58,11 +85,18 @@ export function compareTasks(a: SortableTask, b: SortableTask): number {
     return 1;
   }
 
-  return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
+  return compareCreatedAt(a, b);
 }
 
-export function sortTasks<T extends SortableTask>(tasks: T[]): T[] {
-  return [...tasks].sort(compareTasks);
+export function sortTasks<T extends SortableTask>(tasks: T[], mode: TaskSortMode = "priority"): T[] {
+  const copy = [...tasks];
+  if (mode === "created_asc") {
+    return copy.sort((a, b) => compareCreatedAt(a, b) || compareTasks(a, b));
+  }
+  if (mode === "created_desc") {
+    return copy.sort((a, b) => compareCreatedAt(b, a) || compareTasks(a, b));
+  }
+  return copy.sort(compareTasks);
 }
 
 export function isOverdue(dueAt: string | null | undefined, status?: TaskStatus, now = Date.now()): boolean {
@@ -115,4 +149,50 @@ export function formatDueAt(iso: string, locale = "es-ES"): string {
     return iso;
   }
   return date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+}
+
+export function formatCreatedAtFull(iso: string, locale = "es-ES"): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  return date.toLocaleString(locale, {
+    dateStyle: "full",
+    timeStyle: "short",
+    timeZone: MADRID_TIME_ZONE,
+  });
+}
+
+export function formatCreatedAt(iso: string, now = Date.now(), locale = "es-ES"): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+
+  const days = calendarDaysBetween(date, new Date(now));
+  if (days === 0) {
+    return "hoy";
+  }
+  if (days === 1) {
+    return "ayer";
+  }
+  if (days > 1 && days < 7) {
+    return `hace ${days} días`;
+  }
+
+  const createdYear = new Intl.DateTimeFormat("en", {
+    timeZone: MADRID_TIME_ZONE,
+    year: "numeric",
+  }).format(date);
+  const nowYear = new Intl.DateTimeFormat("en", {
+    timeZone: MADRID_TIME_ZONE,
+    year: "numeric",
+  }).format(new Date(now));
+
+  return date.toLocaleDateString(locale, {
+    day: "numeric",
+    month: "short",
+    year: createdYear === nowYear ? undefined : "numeric",
+    timeZone: MADRID_TIME_ZONE,
+  });
 }

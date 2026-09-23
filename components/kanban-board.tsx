@@ -35,8 +35,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { INBOX_GATE_COPY, STATUS_LABELS, STATUS_ORDER } from "@/lib/labels";
-import { isDueThisWeek, isOverdue, sortTasks } from "@/lib/task-rules";
+import { INBOX_GATE_COPY, STATUS_LABELS, STATUS_ORDER, TASK_SORT_LABELS } from "@/lib/labels";
+import { isDueThisWeek, isOverdue, sortTasks, TASK_SORT_MODES, type TaskSortMode } from "@/lib/task-rules";
 import { cn } from "@/lib/utils";
 import type { Bot, TaskStatus, TaskWithRelations } from "@/lib/types";
 
@@ -118,6 +118,7 @@ export function KanbanBoard({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [dueFilter, setDueFilter] = useState<DueFilter>("all");
+  const [sortMode, setSortMode] = useState<TaskSortMode>("priority");
   const { requestMove, dialogs } = useStatusMove(slug);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -129,9 +130,10 @@ export function KanbanBoard({
       tasks.filter((task) => {
         const archivedOk = showArchived ? Boolean(task.archived_at) : !task.archived_at;
         return archivedOk && matchesDueFilter(task, dueFilter);
-      })
+      }),
+      sortMode
     );
-  }, [dueFilter, showArchived, tasks]);
+  }, [dueFilter, showArchived, sortMode, tasks]);
 
   const grouped = useMemo(() => {
     const map = Object.fromEntries(STATUS_ORDER.map((status) => [status, [] as TaskWithRelations[]])) as Record<
@@ -198,6 +200,18 @@ export function KanbanBoard({
               <SelectItem value="overdue">Vencidas</SelectItem>
               <SelectItem value="week">Esta semana</SelectItem>
               <SelectItem value="none">Sin fecha</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sortMode} onValueChange={(value) => setSortMode(value as TaskSortMode)}>
+            <SelectTrigger className="w-[17.5rem]" aria-label="Ordenar tarjetas">
+              <SelectValue placeholder="Orden" />
+            </SelectTrigger>
+            <SelectContent>
+              {TASK_SORT_MODES.map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {TASK_SORT_LABELS[mode]}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Button
