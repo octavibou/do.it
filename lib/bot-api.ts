@@ -1,5 +1,4 @@
-import { DuplicateTaskError } from "./errors";
-import type { Bot, BotTaskCreate, BotTaskPatch, Priority, Project, TaskStatus } from "./types";
+import type { Bot, BotTaskCreate, BotTaskPatch, Priority, Project, TaskStatus, TaskSummary } from "./types";
 
 const TASK_STATUS_VALUES: readonly TaskStatus[] = ["inbox", "doing", "review", "done"];
 const PRIORITY_VALUES: readonly Priority[] = ["low", "medium", "high", "urgent"];
@@ -497,12 +496,16 @@ export async function handlePostBotTask(input: {
       },
     };
   } catch (error) {
-    if (error instanceof DuplicateTaskError) {
+    if (error instanceof Error && error.name === "DuplicateTaskError") {
+      const duplicates =
+        "matches" in error && Array.isArray(error.matches)
+          ? (error.matches as TaskSummary[])
+          : [];
       return {
         status: 409,
         body: {
           error: error.message,
-          duplicates: error.matches,
+          duplicates,
         },
       };
     }
