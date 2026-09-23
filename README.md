@@ -11,6 +11,17 @@ Backlog único de Octavi: proyectos, humanos y bots. Sustituye webhooks de Notio
 - Webhook al pasar a En curso si el asignado es un bot
 - Auth mínima: contraseña compartida (`APP_PASSWORD`)
 
+## v2 (campos must-have)
+
+- Fecha límite `due_at` (visible y filtrable; **nunca** mueve el estado)
+- Dependencias duras: no se pasa a En curso si hay bloqueadores sin Hecho, salvo **Forzar inicio (override)**
+- Archivo suave (`archived_at`); el tablero las oculta y hay filtro Archivadas
+- Auditoría en `task_events` (creación, estado, asignado, prioridad, fecha, archivo, deps, webhook, override)
+- Confirmación al salir de Bandeja: el estado no se mueve por urgencia; urgente ≠ En curso
+- Anti-duplicados al crear (usar existente o crear de todas formas)
+- Cuerpo más grande, con plantilla por qué / DoD / pasos / deps / enlaces
+- Prioridad en UI: **urgente | alta | normal | baja** (en DB sigue `urgent|high|medium|low`)
+
 ## Arranque
 
 ```bash
@@ -28,7 +39,12 @@ Variables (no commitear secretos):
 | `SUPABASE_SERVICE_ROLE_KEY` | servidor: Server Actions y Route Handlers |
 | `APP_PASSWORD` | contraseña única de la app |
 
-Aplica `supabase/migrations/001_init.sql` en el proyecto Supabase (el hub lo aplica; este repo no puede alcanzar esa cuenta). El SQL crea tablas, RLS (sin políticas para `anon`/`authenticated`) y el seed:
+Aplica las migraciones en el editor SQL del proyecto Supabase `bxvhabbuxwsdwpfeklfc` (otra cuenta; este repo no puede alcanzarla):
+
+1. `supabase/migrations/001_init.sql` — ya aplicada en producción
+2. **`supabase/migrations/002_v2_must_have.sql` — hay que ejecutarla a mano** (columnas `due_at`/`archived_at`, tablas `task_dependencies` y `task_events`)
+
+El SQL crea tablas, RLS (sin políticas para `anon`/`authenticated`) y el seed:
 
 | Proyecto | Bot | id |
 | --- | --- | --- |

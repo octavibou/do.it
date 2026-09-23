@@ -11,6 +11,7 @@ export type DoingWebhookPayload = {
     assignee_type: AssigneeType;
     bot_id: string | null;
     priority: Task["priority"];
+    due_at: string | null;
     created_at: string;
     updated_at: string;
     started_at: string | null;
@@ -57,6 +58,7 @@ export function buildDoingPayload(
       assignee_type: task.assignee_type,
       bot_id: task.bot_id,
       priority: task.priority,
+      due_at: task.due_at,
       created_at: task.created_at,
       updated_at: task.updated_at,
       started_at: task.started_at,
