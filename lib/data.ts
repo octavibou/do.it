@@ -250,7 +250,7 @@ async function listBoardTaskRows(
   if (error) {
     throw error;
   }
-  return (data ?? []) as Omit<TaskRow, "project">[];
+  return (data ?? []) as unknown as Omit<TaskRow, "project">[];
 }
 
 async function countArchivedTasks(projectId: string): Promise<number> {
@@ -380,7 +380,9 @@ export async function listTasksForProject(projectId: string): Promise<TaskWithRe
   }
 
   return attachDependenciesOnly(
-    ((data ?? []) as Omit<TaskRow, "project">[]).map((row) => asBoardTaskRow(row, project as Project))
+    ((data ?? []) as unknown as Omit<TaskRow, "project">[]).map((row) =>
+      asBoardTaskRow(row, project as Project)
+    )
   );
 }
 
