@@ -25,8 +25,30 @@ export function logProjectsList(details: {
   projectCount: number;
   queryCount: number;
   timingsMs: Record<string, number>;
+  countsSource?: string;
 }): void {
   console.info(
-    `[do.it:perf] projects-list projects=${details.projectCount} queries=${details.queryCount} ms=${JSON.stringify(details.timingsMs)}`
+    `[do.it:perf] projects-list projects=${details.projectCount} queries=${details.queryCount} counts=${details.countsSource ?? "rows"} ms=${JSON.stringify(details.timingsMs)}`
+  );
+}
+
+export function logBotsPage(details: {
+  botCount: number;
+  doingCount: number;
+  queryCount: number;
+  timingsMs: Record<string, number>;
+}): void {
+  console.info(
+    `[do.it:perf] bots-page bots=${details.botCount} doing=${details.doingCount} queries=${details.queryCount} ms=${JSON.stringify(details.timingsMs)}`
+  );
+}
+
+export function logSettingsPage(details: {
+  botCount: number;
+  queryCount: number;
+  timingsMs: Record<string, number>;
+}): void {
+  console.info(
+    `[do.it:perf] settings-page bots=${details.botCount} queries=${details.queryCount} ms=${JSON.stringify(details.timingsMs)}`
   );
 }

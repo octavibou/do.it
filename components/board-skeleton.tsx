@@ -27,6 +27,19 @@ export function BoardSkeleton({ projectName }: { projectName?: string }) {
   );
 }
 
+export function CardsSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2" aria-busy="true" aria-live="polite">
+      {Array.from({ length: count }, (_, index) => (
+        <div
+          key={index}
+          className="h-36 animate-pulse rounded-2xl bg-background ring-1 ring-foreground/10"
+        />
+      ))}
+    </div>
+  );
+}
+
 export function PageSkeleton({
   kicker,
   title,
@@ -40,12 +53,7 @@ export function PageSkeleton({
         <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{kicker}</p>
         <h1 className="text-2xl font-medium tracking-tight">{title}</h1>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="h-36 animate-pulse rounded-2xl bg-background ring-1 ring-foreground/10" />
-        <div className="h-36 animate-pulse rounded-2xl bg-background ring-1 ring-foreground/10" />
-        <div className="h-36 animate-pulse rounded-2xl bg-background ring-1 ring-foreground/10" />
-        <div className="h-36 animate-pulse rounded-2xl bg-background ring-1 ring-foreground/10" />
-      </div>
+      <CardsSkeleton />
     </div>
   );
 }

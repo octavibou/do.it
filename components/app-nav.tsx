@@ -21,6 +21,7 @@ export function AppNav() {
           <Link
             key={item.href}
             href={item.href}
+            prefetch
             className={
               active
                 ? "rounded-md bg-foreground px-2.5 py-1 text-sm text-background"

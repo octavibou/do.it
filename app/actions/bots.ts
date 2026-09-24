@@ -1,9 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { requireSession } from "@/lib/auth";
 import { updateBotWebhook } from "@/lib/data";
+import { revalidateAfterWebhookChange } from "@/lib/revalidate";
 import type { ActionResult } from "@/lib/types";
 
 export async function updateBotWebhookAction(formData: FormData): Promise<ActionResult> {
@@ -17,7 +16,7 @@ export async function updateBotWebhookAction(formData: FormData): Promise<Action
 
   try {
     await updateBotWebhook(botId, webhookUrl);
-    revalidatePath("/", "layout");
+    revalidateAfterWebhookChange();
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "No se pudo guardar el webhook." };

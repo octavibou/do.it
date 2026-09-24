@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { sessionOkIfNeeded } from "@/lib/auth";
 import { verifyBotBearer } from "@/lib/auth-token";
 import { handleGetBotTasks, handlePostBotTask, parseJsonBody } from "@/lib/bot-api";
 import { createBotProjectTask, getBot, listProjectTasks } from "@/lib/data";
@@ -13,11 +13,12 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
+  const bearerOk = verifyBotBearer(request.headers.get("authorization"));
   const result = await handleGetBotTasks({
     botId: id,
     searchParams: new URL(request.url).searchParams,
-    bearerOk: verifyBotBearer(request.headers.get("authorization")),
-    sessionOk: await getSession(),
+    bearerOk,
+    sessionOk: await sessionOkIfNeeded(bearerOk),
     deps: { isSupabaseConfigured, getBot, listProjectTasks },
   });
   return NextResponse.json(result.body, { status: result.status });
@@ -38,7 +39,7 @@ export async function POST(
     botId: id,
     body: parsed.body,
     bearerOk,
-    sessionOk: await getSession(),
+    sessionOk: await sessionOkIfNeeded(bearerOk),
     deps: { isSupabaseConfigured, getBot, createBotProjectTask },
   });
   return NextResponse.json(result.body, { status: result.status });

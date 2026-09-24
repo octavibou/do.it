@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
     staleTimes: {
       dynamic: 30,
     },
+    optimizePackageImports: ["radix-ui", "@dnd-kit/core", "@dnd-kit/sortable"],
   },
 };
 

@@ -7,6 +7,8 @@ import { KanbanBoard } from "@/components/kanban-board";
 import { loadProjectBoard } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
 
+export const dynamic = "force-dynamic";
+
 async function ProjectBoard({ slug }: { slug: string }) {
   let result: Awaited<ReturnType<typeof loadProjectBoard>>;
   try {

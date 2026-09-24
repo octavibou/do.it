@@ -1,7 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { requireSession } from "@/lib/auth";
 import {
   addTaskDependency,
@@ -16,14 +14,12 @@ import {
   updateTask,
 } from "@/lib/data";
 import { DependencyBlockError, DuplicateTaskError } from "@/lib/errors";
+import { revalidateAfterTaskChange } from "@/lib/revalidate";
 import { isShortBody } from "@/lib/task-rules";
 import type { ActionResult, AssigneeType, Priority, TaskEvent, TaskStatus } from "@/lib/types";
 
 function revalidateBoard(slug?: string | null) {
-  revalidatePath("/", "layout");
-  if (slug) {
-    revalidatePath(`/projects/${slug}`);
-  }
+  revalidateAfterTaskChange(slug);
 }
 
 function readAssignee(formData: FormData): { assigneeType: AssigneeType; botId: string | null } {

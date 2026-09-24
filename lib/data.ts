@@ -199,11 +199,11 @@ async function attachDependenciesOnly(tasks: TaskRow[]): Promise<TaskWithRelatio
   return next;
 }
 
-export async function listProjects(): Promise<ProjectWithBot[]> {
+export const listProjects = cache(async (): Promise<ProjectWithBot[]> => {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("projects")
-    .select("*, bots(*)")
+    .select(`${PROJECT_SELECT}, bots(id, name, project_id, webhook_url, created_at)`)
     .order("name", { ascending: true });
 
   if (error) {
@@ -211,6 +211,43 @@ export async function listProjects(): Promise<ProjectWithBot[]> {
   }
 
   return (data ?? []) as ProjectWithBot[];
+});
+
+export type StatusCounts = Record<string, Record<TaskStatus, number>>;
+
+function emptyStatusCounts(): Record<TaskStatus, number> {
+  return { inbox: 0, doing: 0, review: 0, done: 0 };
+}
+
+export async function listActiveTaskStatusCounts(): Promise<{ counts: StatusCounts; source: "rpc" | "rows" }> {
+  const supabase = createAdminClient();
+  const rpc = await supabase.rpc("active_task_status_counts");
+  if (!rpc.error && rpc.data) {
+    const counts: StatusCounts = {};
+    for (const row of rpc.data as { project_id: string; status: TaskStatus; n: number }[]) {
+      counts[row.project_id] ??= emptyStatusCounts();
+      counts[row.project_id][row.status] = Number(row.n);
+    }
+    return { counts, source: "rpc" };
+  }
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("project_id, status")
+    .is("archived_at", null);
+
+  if (error) {
+    throw error;
+  }
+
+  const counts: StatusCounts = {};
+  for (const row of data ?? []) {
+    const projectId = row.project_id as string;
+    const status = row.status as TaskStatus;
+    counts[projectId] ??= emptyStatusCounts();
+    counts[projectId][status] += 1;
+  }
+  return { counts, source: "rows" };
 }
 
 export const getProjectBySlug = cache(async (slug: string): Promise<ProjectWithBot | null> => {
@@ -422,18 +459,42 @@ export async function getTask(taskId: string): Promise<TaskWithRelations | null>
   return task ?? null;
 }
 
-export async function listBots(): Promise<(Bot & { project: Project })[]> {
+export const listBots = cache(async (): Promise<(Bot & { project: Project })[]> => {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("bots")
-    .select("*, project:projects(*)")
+    .select("id, name, project_id, webhook_url, created_at, project:projects(id, slug, name, created_at)")
     .order("name", { ascending: true });
 
   if (error) {
     throw error;
   }
 
-  return (data ?? []) as (Bot & { project: Project })[];
+  return (data ?? []) as unknown as (Bot & { project: Project })[];
+});
+
+export type DoingBotWork = {
+  id: string;
+  title: string;
+  bot_id: string | null;
+  webhook_error: string | null;
+};
+
+export async function listDoingBotWork(): Promise<DoingBotWork[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("id, title, bot_id, webhook_error")
+    .eq("assignee_type", "bot")
+    .eq("status", "doing")
+    .is("archived_at", null)
+    .order("started_at", { ascending: true, nullsFirst: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []) as DoingBotWork[];
 }
 
 export async function getBot(id: string): Promise<(Bot & { project: Project }) | null> {
