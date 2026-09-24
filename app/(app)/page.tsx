@@ -4,19 +4,16 @@ import { ConfigNotice } from "@/components/config-notice";
 import { Badge } from "@/components/ui/badge";
 import { listProjects } from "@/lib/data";
 import { STATUS_LABELS } from "@/lib/labels";
+import { logProjectsList, measureAsync } from "@/lib/perf";
 import { createAdminClient, isSupabaseConfigured } from "@/lib/supabase/admin";
 import type { TaskStatus } from "@/lib/types";
 
-async function loadCounts(projectIds: string[]) {
-  if (projectIds.length === 0) {
-    return {};
-  }
-
+async function loadActiveCounts() {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("tasks")
-    .select("project_id, status, archived_at")
-    .in("project_id", projectIds);
+    .select("project_id, status")
+    .is("archived_at", null);
 
   if (error) {
     throw error;
@@ -24,9 +21,6 @@ async function loadCounts(projectIds: string[]) {
 
   const counts: Record<string, Record<TaskStatus, number>> = {};
   for (const row of data ?? []) {
-    if (row.archived_at) {
-      continue;
-    }
     const projectId = row.project_id as string;
     const status = row.status as TaskStatus;
     counts[projectId] ??= { inbox: 0, doing: 0, review: 0, done: 0 };
@@ -37,9 +31,16 @@ async function loadCounts(projectIds: string[]) {
 
 async function loadPage() {
   try {
-    const projects = await listProjects();
-    const counts = await loadCounts(projects.map((project) => project.id));
-    return { ok: true as const, projects, counts };
+    const total = await measureAsync("total", async () => {
+      const [projects, counts] = await Promise.all([listProjects(), loadActiveCounts()]);
+      return { projects, counts };
+    });
+    logProjectsList({
+      projectCount: total.value.projects.length,
+      queryCount: 2,
+      timingsMs: { total: total.ms },
+    });
+    return { ok: true as const, ...total.value };
   } catch (error) {
     return {
       ok: false as const,
@@ -95,6 +96,7 @@ function ProjectGrid({
             <Link
               key={project.id}
               href={`/projects/${project.slug}`}
+              prefetch
               className="rounded-2xl bg-background p-4 ring-1 ring-foreground/10 transition hover:ring-foreground/30"
             >
               <div className="flex items-start justify-between gap-3">

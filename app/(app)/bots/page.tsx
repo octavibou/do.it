@@ -72,6 +72,7 @@ function BotsWorkView({
                 </div>
                 <Link
                   href={`/projects/${bot.project.slug}`}
+                  prefetch
                   className="text-sm underline-offset-4 hover:underline"
                 >
                   Abrir tablero

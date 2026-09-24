@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { findSimilarTitles, isStrongTitleMatch, normalizeTitle } from "../lib/duplicates.ts";
+import { chunkIds, joinDependencyMaps, uniqueDependencyEdges } from "../lib/task-deps.ts";
 import { PRIORITY_LABELS } from "../lib/labels.ts";
 import {
   canEnterDoing,
@@ -90,5 +91,28 @@ assert.equal(isShortBody("x".repeat(40)), false);
 assert.equal(isOverdue("2020-01-01T00:00:00.000Z", "inbox", Date.parse("2026-01-01T00:00:00.000Z")), true);
 assert.equal(isOverdue("2020-01-01T00:00:00.000Z", "done", Date.parse("2026-01-01T00:00:00.000Z")), false);
 assert.equal(isOverdue(null, "inbox"), false);
+
+assert.deepEqual(chunkIds([], 2), []);
+assert.deepEqual(chunkIds(["a", "b", "c"], 2), [["a", "b"], ["c"]]);
+assert.deepEqual(
+  uniqueDependencyEdges([
+    { blocker_task_id: "a", blocked_task_id: "b" },
+    { blocker_task_id: "a", blocked_task_id: "b" },
+    { blocker_task_id: "b", blocked_task_id: "c" },
+  ]),
+  [
+    { blocker_task_id: "a", blocked_task_id: "b" },
+    { blocker_task_id: "b", blocked_task_id: "c" },
+  ]
+);
+
+const summaries = new Map([
+  ["a", { id: "a", title: "A", status: "done", archived_at: null }],
+  ["b", { id: "b", title: "B", status: "inbox", archived_at: null }],
+]);
+const joined = joinDependencyMaps(["a", "b"], [{ blocker_task_id: "a", blocked_task_id: "b" }], (id) => summaries.get(id) ?? null);
+assert.deepEqual(joined.get("b")?.blocked_by.map((row) => row.id), ["a"]);
+assert.deepEqual(joined.get("a")?.blocks.map((row) => row.id), ["b"]);
+assert.equal(joined.get("b")?.blocks.length, 0);
 
 console.log("v2 rules ok");

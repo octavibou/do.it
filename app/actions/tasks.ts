@@ -7,6 +7,7 @@ import {
   addTaskDependency,
   archiveTask,
   createTask,
+  listArchivedTasksForProject,
   listTaskEvents,
   moveTask,
   removeTaskDependency,
@@ -224,4 +225,20 @@ export async function retryWebhookAction(taskId: string, slug?: string): Promise
 export async function loadTaskEventsAction(taskId: string): Promise<TaskEvent[]> {
   await requireSession();
   return listTaskEvents(taskId);
+}
+
+export async function loadArchivedTasksAction(
+  projectId: string
+): Promise<{ ok: true; tasks: Awaited<ReturnType<typeof listArchivedTasksForProject>> } | { ok: false; error: string }> {
+  await requireSession();
+  if (!projectId) {
+    return { ok: false, error: "Falta el proyecto." };
+  }
+
+  try {
+    const tasks = await listArchivedTasksForProject(projectId);
+    return { ok: true, tasks };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "No se pudieron cargar las archivadas." };
+  }
 }
