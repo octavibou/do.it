@@ -1,9 +1,18 @@
 import "server-only";
 
+import { cache } from "react";
+
 import { findSimilarTitles } from "@/lib/duplicates";
 import { DependencyBlockError, DuplicateTaskError } from "@/lib/errors";
 import { formatAssigneeValue } from "@/lib/labels";
+import { logBoardOpen, measureAsync } from "@/lib/perf";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  chunkIds,
+  joinDependencyMaps,
+  uniqueDependencyEdges,
+  type DependencyEdge,
+} from "@/lib/task-deps";
 import { incompleteBlockers } from "@/lib/task-rules";
 import type {
   AssigneeType,
@@ -23,6 +32,9 @@ import type {
 import { dispatchDoingWebhook, shouldDispatchDoingWebhook } from "@/lib/webhooks";
 
 const TASK_SELECT = "*, bot:bots(*), project:projects(*)";
+const BOARD_TASK_SELECT =
+  "id, project_id, title, description, status, assignee_type, bot_id, priority, due_at, archived_at, created_at, updated_at, started_at, webhook_error, webhook_fired_at, bot:bots(id, name, project_id, webhook_url, created_at)";
+const PROJECT_SELECT = "id, slug, name, created_at";
 const ACTOR_OCTAVI = "octavi";
 const ACTOR_SYSTEM = "system";
 
@@ -95,26 +107,50 @@ async function recordTaskEvents(events: EventInput[]): Promise<void> {
   }
 }
 
-async function attachDependencies(tasks: TaskRow[]): Promise<TaskWithRelations[]> {
-  if (tasks.length === 0) {
-    return [];
+async function fetchDependencyEdges(ids: string[]): Promise<{ edges: DependencyEdge[]; queryCount: number }> {
+  if (ids.length === 0) {
+    return { edges: [], queryCount: 0 };
   }
 
   const supabase = createAdminClient();
-  const ids = tasks.map((task) => task.id);
-  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const chunks = chunkIds(ids);
+  const results = await Promise.all(
+    chunks.flatMap((chunk) => [
+      supabase
+        .from("task_dependencies")
+        .select("blocker_task_id, blocked_task_id")
+        .in("blocker_task_id", chunk),
+      supabase
+        .from("task_dependencies")
+        .select("blocker_task_id, blocked_task_id")
+        .in("blocked_task_id", chunk),
+    ])
+  );
 
-  const { data, error } = await supabase
-    .from("task_dependencies")
-    .select("blocker_task_id, blocked_task_id")
-    .or(`blocker_task_id.in.(${ids.join(",")}),blocked_task_id.in.(${ids.join(",")})`);
-
-  if (error) {
-    throw error;
+  const edges: DependencyEdge[] = [];
+  for (const result of results) {
+    if (result.error) {
+      throw result.error;
+    }
+    for (const row of result.data ?? []) {
+      edges.push(row as DependencyEdge);
+    }
   }
 
+  return { edges: uniqueDependencyEdges(edges), queryCount: results.length };
+}
+
+async function attachDependencies(tasks: TaskRow[]): Promise<{ tasks: TaskWithRelations[]; queryCount: number }> {
+  if (tasks.length === 0) {
+    return { tasks: [], queryCount: 0 };
+  }
+
+  const ids = tasks.map((task) => task.id);
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const { edges, queryCount } = await fetchDependencyEdges(ids);
+
   const missingIds = new Set<string>();
-  for (const row of data ?? []) {
+  for (const row of edges) {
     if (!byId.has(row.blocker_task_id)) {
       missingIds.add(row.blocker_task_id);
     }
@@ -124,7 +160,10 @@ async function attachDependencies(tasks: TaskRow[]): Promise<TaskWithRelations[]
   }
 
   const extra = new Map<string, TaskSummary>();
+  let extraQueries = 0;
   if (missingIds.size > 0) {
+    const supabase = createAdminClient();
+    extraQueries = 1;
     const { data: extraRows, error: extraError } = await supabase
       .from("tasks")
       .select("id, title, status, archived_at")
@@ -145,32 +184,26 @@ async function attachDependencies(tasks: TaskRow[]): Promise<TaskWithRelations[]
     return extra.get(id) ?? null;
   };
 
-  return tasks.map((task) => {
-    const blocked_by: TaskSummary[] = [];
-    const blocks: TaskSummary[] = [];
-    for (const row of data ?? []) {
-      if (row.blocked_task_id === task.id) {
-        const blocker = summaryOf(row.blocker_task_id);
-        if (blocker) {
-          blocked_by.push(blocker);
-        }
-      }
-      if (row.blocker_task_id === task.id) {
-        const blocked = summaryOf(row.blocked_task_id);
-        if (blocked) {
-          blocks.push(blocked);
-        }
-      }
-    }
-    return { ...withEmptyDeps(task), blocked_by, blocks };
-  });
+  const joined = joinDependencyMaps(ids, edges, summaryOf);
+  return {
+    queryCount: queryCount + extraQueries,
+    tasks: tasks.map((task) => {
+      const deps = joined.get(task.id) ?? { blocked_by: [], blocks: [] };
+      return { ...withEmptyDeps(task), blocked_by: deps.blocked_by, blocks: deps.blocks };
+    }),
+  };
 }
 
-export async function listProjects(): Promise<ProjectWithBot[]> {
+async function attachDependenciesOnly(tasks: TaskRow[]): Promise<TaskWithRelations[]> {
+  const { tasks: next } = await attachDependencies(tasks);
+  return next;
+}
+
+export const listProjects = cache(async (): Promise<ProjectWithBot[]> => {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("projects")
-    .select("*, bots(*)")
+    .select(`${PROJECT_SELECT}, bots(id, name, project_id, webhook_url, created_at)`)
     .order("name", { ascending: true });
 
   if (error) {
@@ -178,13 +211,50 @@ export async function listProjects(): Promise<ProjectWithBot[]> {
   }
 
   return (data ?? []) as ProjectWithBot[];
+});
+
+export type StatusCounts = Record<string, Record<TaskStatus, number>>;
+
+function emptyStatusCounts(): Record<TaskStatus, number> {
+  return { inbox: 0, doing: 0, review: 0, done: 0 };
 }
 
-export async function getProjectBySlug(slug: string): Promise<ProjectWithBot | null> {
+export async function listActiveTaskStatusCounts(): Promise<{ counts: StatusCounts; source: "rpc" | "rows" }> {
+  const supabase = createAdminClient();
+  const rpc = await supabase.rpc("active_task_status_counts");
+  if (!rpc.error && rpc.data) {
+    const counts: StatusCounts = {};
+    for (const row of rpc.data as { project_id: string; status: TaskStatus; n: number }[]) {
+      counts[row.project_id] ??= emptyStatusCounts();
+      counts[row.project_id][row.status] = Number(row.n);
+    }
+    return { counts, source: "rpc" };
+  }
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("project_id, status")
+    .is("archived_at", null);
+
+  if (error) {
+    throw error;
+  }
+
+  const counts: StatusCounts = {};
+  for (const row of data ?? []) {
+    const projectId = row.project_id as string;
+    const status = row.status as TaskStatus;
+    counts[projectId] ??= emptyStatusCounts();
+    counts[projectId][status] += 1;
+  }
+  return { counts, source: "rows" };
+}
+
+export const getProjectBySlug = cache(async (slug: string): Promise<ProjectWithBot | null> => {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("projects")
-    .select("*, bots(*)")
+    .select(`${PROJECT_SELECT}, bots(id, name, project_id, webhook_url, created_at)`)
     .eq("slug", slug)
     .maybeSingle();
 
@@ -193,21 +263,164 @@ export async function getProjectBySlug(slug: string): Promise<ProjectWithBot | n
   }
 
   return (data as ProjectWithBot | null) ?? null;
+});
+
+function asBoardTaskRow(row: Omit<TaskRow, "project">, project: Project): TaskRow {
+  return {
+    ...(row as TaskRow),
+    due_at: row.due_at ?? null,
+    archived_at: row.archived_at ?? null,
+    bot: row.bot ?? null,
+    project,
+  };
+}
+
+async function listBoardTaskRows(
+  projectId: string,
+  archived: boolean
+): Promise<Omit<TaskRow, "project">[]> {
+  const supabase = createAdminClient();
+  let query = supabase.from("tasks").select(BOARD_TASK_SELECT).eq("project_id", projectId);
+  query = archived ? query.not("archived_at", "is", null) : query.is("archived_at", null);
+
+  const { data, error } = await query.order("created_at", { ascending: true });
+  if (error) {
+    throw error;
+  }
+  return (data ?? []) as unknown as Omit<TaskRow, "project">[];
+}
+
+async function countArchivedTasks(projectId: string): Promise<number> {
+  const supabase = createAdminClient();
+  const { count, error } = await supabase
+    .from("tasks")
+    .select("id", { count: "exact", head: true })
+    .eq("project_id", projectId)
+    .not("archived_at", "is", null);
+
+  if (error) {
+    throw error;
+  }
+
+  return count ?? 0;
+}
+
+async function hydrateBoardTasks(project: Project, archived: boolean) {
+  const rows = await listBoardTaskRows(project.id, archived);
+  return attachDependencies(rows.map((row) => asBoardTaskRow(row, project)));
+}
+
+export async function listArchivedTasksForProject(projectId: string): Promise<TaskWithRelations[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("projects")
+    .select(PROJECT_SELECT)
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+  if (!data) {
+    return [];
+  }
+
+  const { tasks } = await hydrateBoardTasks(data as Project, true);
+  return tasks;
+}
+
+export async function loadProjectBoard(slug: string): Promise<{
+  project: ProjectWithBot | null;
+  tasks: TaskWithRelations[];
+  archivedCount: number;
+}> {
+  const total = await measureAsync("total", async () => {
+    const projectResult = await measureAsync("project", () => getProjectBySlug(slug));
+    if (!projectResult.value) {
+      return {
+        project: null as ProjectWithBot | null,
+        tasks: [] as TaskWithRelations[],
+        archivedCount: 0,
+        queryCount: 1,
+        timingsMs: { project: projectResult.ms, tasks: 0, deps: 0, archived: 0, total: projectResult.ms },
+      };
+    }
+
+    const project = projectResult.value;
+    const [tasksResult, archivedResult] = await Promise.all([
+      measureAsync("tasks", () => listBoardTaskRows(project.id, false)),
+      measureAsync("archived", () => countArchivedTasks(project.id)),
+    ]);
+
+    const depsResult = await measureAsync("deps", () =>
+      attachDependencies(tasksResult.value.map((row) => asBoardTaskRow(row, project)))
+    );
+
+    const timingsMs = {
+      project: projectResult.ms,
+      tasks: tasksResult.ms,
+      deps: depsResult.ms,
+      archived: archivedResult.ms,
+      total: 0,
+    };
+    const queryCount = 1 + 1 + 1 + depsResult.value.queryCount;
+
+    return {
+      project,
+      tasks: depsResult.value.tasks,
+      archivedCount: archivedResult.value,
+      queryCount,
+      timingsMs,
+    };
+  });
+
+  const payload = total.value;
+  payload.timingsMs.total = total.ms;
+  logBoardOpen({
+    slug,
+    taskCount: payload.tasks.length,
+    archivedCount: payload.archivedCount,
+    queryCount: payload.queryCount,
+    timingsMs: payload.timingsMs,
+  });
+
+  return {
+    project: payload.project,
+    tasks: payload.tasks,
+    archivedCount: payload.archivedCount,
+  };
 }
 
 export async function listTasksForProject(projectId: string): Promise<TaskWithRelations[]> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("tasks")
-    .select(TASK_SELECT)
+    .select(BOARD_TASK_SELECT)
     .eq("project_id", projectId)
+    .is("archived_at", null)
     .order("created_at", { ascending: true });
 
   if (error) {
     throw error;
   }
 
-  return attachDependencies((data ?? []) as TaskRow[]);
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select(PROJECT_SELECT)
+    .eq("id", projectId)
+    .maybeSingle();
+  if (projectError) {
+    throw projectError;
+  }
+  if (!project) {
+    return [];
+  }
+
+  return attachDependenciesOnly(
+    ((data ?? []) as unknown as Omit<TaskRow, "project">[]).map((row) =>
+      asBoardTaskRow(row, project as Project)
+    )
+  );
 }
 
 export async function listProjectTasks(
@@ -230,7 +443,7 @@ export async function listProjectTasks(
     throw error;
   }
 
-  return attachDependencies((data ?? []) as TaskRow[]);
+  return attachDependenciesOnly((data ?? []) as TaskRow[]);
 }
 
 export async function getTask(taskId: string): Promise<TaskWithRelations | null> {
@@ -242,22 +455,46 @@ export async function getTask(taskId: string): Promise<TaskWithRelations | null>
   if (!data) {
     return null;
   }
-  const [task] = await attachDependencies([data as TaskRow]);
+  const [task] = await attachDependenciesOnly([data as TaskRow]);
   return task ?? null;
 }
 
-export async function listBots(): Promise<(Bot & { project: Project })[]> {
+export const listBots = cache(async (): Promise<(Bot & { project: Project })[]> => {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("bots")
-    .select("*, project:projects(*)")
+    .select("id, name, project_id, webhook_url, created_at, project:projects(id, slug, name, created_at)")
     .order("name", { ascending: true });
 
   if (error) {
     throw error;
   }
 
-  return (data ?? []) as (Bot & { project: Project })[];
+  return (data ?? []) as unknown as (Bot & { project: Project })[];
+});
+
+export type DoingBotWork = {
+  id: string;
+  title: string;
+  bot_id: string | null;
+  webhook_error: string | null;
+};
+
+export async function listDoingBotWork(): Promise<DoingBotWork[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("id, title, bot_id, webhook_error")
+    .eq("assignee_type", "bot")
+    .eq("status", "doing")
+    .is("archived_at", null)
+    .order("started_at", { ascending: true, nullsFirst: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []) as DoingBotWork[];
 }
 
 export async function getBot(id: string): Promise<(Bot & { project: Project }) | null> {
@@ -293,7 +530,7 @@ export async function listDoingTasksForBot(botId: string): Promise<TaskWithRelat
     throw error;
   }
 
-  return attachDependencies((data ?? []) as TaskRow[]);
+  return attachDependenciesOnly((data ?? []) as TaskRow[]);
 }
 
 export async function listAllDoingBotTasks(): Promise<TaskWithRelations[]> {
@@ -306,7 +543,7 @@ export async function listAllDoingBotTasks(): Promise<TaskWithRelations[]> {
     throw error;
   }
 
-  return attachDependencies((data ?? []) as TaskRow[]);
+  return attachDependenciesOnly((data ?? []) as TaskRow[]);
 }
 
 export async function listTaskEvents(taskId: string, limit = 30): Promise<TaskEvent[]> {
@@ -547,7 +784,7 @@ export async function createTask(
     throw error;
   }
 
-  const [task] = await attachDependencies([data as TaskRow]);
+  const [task] = await attachDependenciesOnly([data as TaskRow]);
   await recordTaskEvents([
     {
       taskId: task.id,
@@ -644,7 +881,7 @@ export async function updateTask(
     throw error;
   }
 
-  const [task] = await attachDependencies([data as TaskRow]);
+  const [task] = await attachDependenciesOnly([data as TaskRow]);
   await recordTaskEvents(collectUpdateEvents(asTask(previous), asTask(task)));
   const webhookError = await maybeFireWebhook(task, previous);
   return { task, webhookError };
@@ -693,7 +930,7 @@ export async function updateBotProjectTask(
     throw error;
   }
 
-  const [task] = await attachDependencies([data as TaskRow]);
+  const [task] = await attachDependenciesOnly([data as TaskRow]);
   const next = asTask(task);
   const prev = asTask(previous);
   const events: EventInput[] = [];
@@ -783,7 +1020,7 @@ export async function createBotProjectTask(
     throw error;
   }
 
-  const [task] = await attachDependencies([data as TaskRow]);
+  const [task] = await attachDependenciesOnly([data as TaskRow]);
   await recordTaskEvents([
     {
       taskId: task.id,
@@ -833,7 +1070,7 @@ export async function archiveTask(taskId: string): Promise<TaskWithRelations> {
     throw error;
   }
 
-  const [task] = await attachDependencies([data as TaskRow]);
+  const [task] = await attachDependenciesOnly([data as TaskRow]);
   await recordTaskEvents([
     {
       taskId,
@@ -868,7 +1105,7 @@ export async function unarchiveTask(taskId: string): Promise<TaskWithRelations> 
     throw error;
   }
 
-  const [task] = await attachDependencies([data as TaskRow]);
+  const [task] = await attachDependenciesOnly([data as TaskRow]);
   await recordTaskEvents([
     {
       taskId,
@@ -1034,7 +1271,7 @@ export async function retryTaskWebhook(
     throw error;
   }
 
-  const [task] = await attachDependencies([data as TaskRow]);
+  const [task] = await attachDependenciesOnly([data as TaskRow]);
   if (task.status !== "doing" || task.assignee_type !== "bot") {
     return { task, webhookError: task.webhook_error };
   }
@@ -1055,7 +1292,7 @@ export async function retryTaskWebhook(
   const webhookError = await persistWebhookResult(task.id, result);
 
   const { data: refreshed } = await supabase.from("tasks").select(TASK_SELECT).eq("id", taskId).single();
-  const [next] = refreshed ? await attachDependencies([refreshed as TaskRow]) : [task];
+  const [next] = refreshed ? await attachDependenciesOnly([refreshed as TaskRow]) : [task];
 
   return {
     task: next,

@@ -45,6 +45,8 @@ Aplica las migraciones en el editor SQL del proyecto Supabase `bxvhabbuxwsdwpfek
 
 1. `supabase/migrations/001_init.sql` — ya aplicada en producción
 2. **`supabase/migrations/002_v2_must_have.sql` — hay que ejecutarla a mano** (columnas `due_at`/`archived_at`, tablas `task_dependencies` y `task_events`)
+3. **`supabase/migrations/003_board_open_indexes.sql` — hay que ejecutarla a mano** (índices para abrir el tablero: tareas activas por proyecto, archivadas y dependencias por `blocker_task_id`). Sin ella la app funciona; las consultas del Kanban son más lentas.
+4. **`supabase/migrations/004_list_aggregates.sql` — hay que ejecutarla a mano** (función `active_task_status_counts()` para la home e índice de tareas en curso de bots). Sin ella la lista de proyectos usa el fallback fila a fila.
 
 El SQL crea tablas, RLS (sin políticas para `anon`/`authenticated`) y el seed:
 

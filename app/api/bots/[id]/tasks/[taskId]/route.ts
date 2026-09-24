@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { sessionOkIfNeeded } from "@/lib/auth";
 import { verifyBotBearer } from "@/lib/auth-token";
 import { handleGetBotTask, handlePatchBotTask, parseJsonBody } from "@/lib/bot-api";
 import { getBot, getTask, updateBotProjectTask } from "@/lib/data";
@@ -18,7 +18,7 @@ export async function GET(
     botId: id,
     taskId,
     bearerOk,
-    sessionOk: await getSession(),
+    sessionOk: await sessionOkIfNeeded(bearerOk),
     deps: { isSupabaseConfigured, getBot, getTask },
   });
   return NextResponse.json(result.body, { status: result.status });
@@ -40,7 +40,7 @@ export async function PATCH(
     taskId,
     body: parsed.body,
     bearerOk,
-    sessionOk: await getSession(),
+    sessionOk: await sessionOkIfNeeded(bearerOk),
     deps: { isSupabaseConfigured, getBot, getTask, updateBotProjectTask },
   });
   return NextResponse.json(result.body, { status: result.status });

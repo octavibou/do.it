@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import {
   DndContext,
@@ -15,9 +16,10 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Plus } from "lucide-react";
+import { toast } from "sonner";
 
+import { loadArchivedTasksAction } from "@/app/actions/tasks";
 import { TaskCard } from "@/components/task-card";
-import { TaskForm } from "@/components/task-form";
 import { useStatusMove } from "@/components/status-move";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +41,13 @@ import { INBOX_GATE_COPY, STATUS_LABELS, STATUS_ORDER, TASK_SORT_LABELS } from "
 import { isDueThisWeek, isOverdue, sortTasks, TASK_SORT_MODES, type TaskSortMode } from "@/lib/task-rules";
 import { cn } from "@/lib/utils";
 import type { Bot, TaskStatus, TaskWithRelations } from "@/lib/types";
+
+const TaskForm = dynamic(
+  () => import("@/components/task-form").then((mod) => mod.TaskForm),
+  {
+    loading: () => <p className="text-sm text-muted-foreground">Cargando formulario…</p>,
+  }
+);
 
 type DueFilter = "all" | "overdue" | "week" | "none";
 
@@ -106,17 +115,21 @@ export function KanbanBoard({
   projectName,
   bots,
   tasks,
+  archivedCount,
 }: {
   slug: string;
   projectId: string;
   projectName: string;
   bots: Bot[];
   tasks: TaskWithRelations[];
+  archivedCount: number;
 }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTaskId, setEditTaskId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [archivedTasks, setArchivedTasks] = useState<TaskWithRelations[] | null>(null);
+  const [archivedLoading, setArchivedLoading] = useState(false);
   const [dueFilter, setDueFilter] = useState<DueFilter>("all");
   const [sortMode, setSortMode] = useState<TaskSortMode>("priority");
   const { requestMove, dialogs } = useStatusMove(slug);
@@ -125,15 +138,14 @@ export function KanbanBoard({
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } })
   );
 
+  const sourceTasks = showArchived ? (archivedTasks ?? []) : tasks;
+
   const visible = useMemo(() => {
     return sortTasks(
-      tasks.filter((task) => {
-        const archivedOk = showArchived ? Boolean(task.archived_at) : !task.archived_at;
-        return archivedOk && matchesDueFilter(task, dueFilter);
-      }),
+      sourceTasks.filter((task) => matchesDueFilter(task, dueFilter)),
       sortMode
     );
-  }, [dueFilter, showArchived, sortMode, tasks]);
+  }, [dueFilter, sortMode, sourceTasks]);
 
   const grouped = useMemo(() => {
     const map = Object.fromEntries(STATUS_ORDER.map((status) => [status, [] as TaskWithRelations[]])) as Record<
@@ -146,9 +158,27 @@ export function KanbanBoard({
     return map;
   }, [visible]);
 
-  const activeTask = tasks.find((task) => task.id === activeId) ?? null;
-  const editTask = tasks.find((task) => task.id === editTaskId) ?? null;
-  const archivedCount = tasks.filter((task) => task.archived_at).length;
+  const formTasks = archivedTasks ? [...tasks, ...archivedTasks] : tasks;
+  const activeTask = sourceTasks.find((task) => task.id === activeId) ?? null;
+  const editTask = formTasks.find((task) => task.id === editTaskId) ?? null;
+
+  async function toggleArchived() {
+    const next = !showArchived;
+    if (next && archivedTasks === null) {
+      setShowArchived(true);
+      setArchivedLoading(true);
+      const result = await loadArchivedTasksAction(projectId);
+      setArchivedLoading(false);
+      if (!result.ok) {
+        toast.error(result.error);
+        setShowArchived(false);
+        return;
+      }
+      setArchivedTasks(result.tasks);
+      return;
+    }
+    setShowArchived(next);
+  }
 
   function onDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
@@ -217,9 +247,10 @@ export function KanbanBoard({
           <Button
             type="button"
             variant={showArchived ? "default" : "outline"}
-            onClick={() => setShowArchived((value) => !value)}
+            onClick={() => void toggleArchived()}
+            disabled={archivedLoading}
           >
-            Archivadas ({archivedCount})
+            {archivedLoading ? "Cargando archivadas…" : `Archivadas (${archivedCount})`}
           </Button>
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
@@ -239,7 +270,7 @@ export function KanbanBoard({
                 projectId={projectId}
                 slug={slug}
                 bots={bots}
-                tasks={tasks}
+                tasks={formTasks}
                 onDone={() => setCreateOpen(false)}
                 onUseExisting={openExisting}
               />
@@ -250,7 +281,9 @@ export function KanbanBoard({
       {showArchived ? (
         <section className="grid gap-2">
           <h2 className="text-sm font-medium">Archivadas</h2>
-          {visible.length === 0 ? (
+          {archivedLoading ? (
+            <p className="text-sm text-muted-foreground">Cargando archivadas…</p>
+          ) : visible.length === 0 ? (
             <p className="text-sm text-muted-foreground">No hay tareas archivadas con este filtro.</p>
           ) : (
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -307,7 +340,7 @@ export function KanbanBoard({
               projectId={projectId}
               slug={slug}
               bots={bots}
-              tasks={tasks}
+              tasks={formTasks}
               task={editTask}
               onDone={() => setEditTaskId(null)}
             />

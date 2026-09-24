@@ -22,3 +22,10 @@ export async function requireSession(): Promise<void> {
     throw new Error("Unauthorized");
   }
 }
+
+export async function sessionOkIfNeeded(bearerOk: boolean): Promise<boolean> {
+  if (bearerOk) {
+    return false;
+  }
+  return getSession();
+}

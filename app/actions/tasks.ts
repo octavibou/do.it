@@ -1,12 +1,11 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { requireSession } from "@/lib/auth";
 import {
   addTaskDependency,
   archiveTask,
   createTask,
+  listArchivedTasksForProject,
   listTaskEvents,
   moveTask,
   removeTaskDependency,
@@ -15,14 +14,12 @@ import {
   updateTask,
 } from "@/lib/data";
 import { DependencyBlockError, DuplicateTaskError } from "@/lib/errors";
+import { revalidateAfterTaskChange } from "@/lib/revalidate";
 import { isShortBody } from "@/lib/task-rules";
 import type { ActionResult, AssigneeType, Priority, TaskEvent, TaskStatus } from "@/lib/types";
 
 function revalidateBoard(slug?: string | null) {
-  revalidatePath("/", "layout");
-  if (slug) {
-    revalidatePath(`/projects/${slug}`);
-  }
+  revalidateAfterTaskChange(slug);
 }
 
 function readAssignee(formData: FormData): { assigneeType: AssigneeType; botId: string | null } {
@@ -224,4 +221,20 @@ export async function retryWebhookAction(taskId: string, slug?: string): Promise
 export async function loadTaskEventsAction(taskId: string): Promise<TaskEvent[]> {
   await requireSession();
   return listTaskEvents(taskId);
+}
+
+export async function loadArchivedTasksAction(
+  projectId: string
+): Promise<{ ok: true; tasks: Awaited<ReturnType<typeof listArchivedTasksForProject>> } | { ok: false; error: string }> {
+  await requireSession();
+  if (!projectId) {
+    return { ok: false, error: "Falta el proyecto." };
+  }
+
+  try {
+    const tasks = await listArchivedTasksForProject(projectId);
+    return { ok: true, tasks };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "No se pudieron cargar las archivadas." };
+  }
 }
