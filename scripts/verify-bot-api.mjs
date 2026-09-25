@@ -8,6 +8,7 @@ import {
   handleGetBotTasks,
   handlePatchBotTask,
   handlePostBotTask,
+  assertPatchAssigneeInProject,
   parseBotTaskCreate,
   parseBotTaskPatch,
   parseJsonBody,
@@ -15,7 +16,7 @@ import {
   taskBelongsToBotProject,
 } from "../lib/bot-api.ts";
 import { isBotApiPath, verifyBotApiToken, verifyBotBearer } from "../lib/auth-token.ts";
-import { DuplicateTaskError } from "../lib/errors.ts";
+import { DependencyBlockError, DuplicateTaskError } from "../lib/errors.ts";
 
 const TOKEN = "bot-secret-token";
 const OTHER = "wrong-token";
@@ -52,6 +53,39 @@ const flow = {
   },
 };
 
+const flowHelper = {
+  id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  name: "FlowHelper",
+  project_id: "proj-leadflow",
+  webhook_url: null,
+  created_at: "2026-01-01T00:00:00.000Z",
+  project: {
+    id: "proj-leadflow",
+    slug: "leadflow",
+    name: "Leadflow",
+    created_at: "2026-01-01T00:00:00.000Z",
+  },
+};
+
+const home = {
+  id: "728f5795-a9b8-4253-8ffd-4dbd25f57a0c",
+  name: "Home",
+  project_id: "proj-personal",
+  webhook_url: null,
+  created_at: "2026-01-01T00:00:00.000Z",
+  project: {
+    id: "proj-personal",
+    slug: "personal",
+    name: "Personal",
+    created_at: "2026-01-01T00:00:00.000Z",
+  },
+};
+
+function botsById(...bots) {
+  const map = new Map(bots.map((bot) => [bot.id, bot]));
+  return async (id) => map.get(id) ?? null;
+}
+
 const ownTask = {
   id: "task-1",
   project_id: "proj-leadflow",
@@ -74,7 +108,7 @@ const foreignTask = {
 function baseDeps(overrides = {}) {
   return {
     isSupabaseConfigured: () => true,
-    getBot: async (id) => (id === flow.id ? flow : null),
+    getBot: botsById(flow, flowHelper, home),
     listProjectTasks: async () => [ownTask],
     listDoingTasksForBot: async () => [],
     getTask: async (taskId) => {
@@ -116,7 +150,7 @@ await withToken(undefined, () => {
   assert.equal(verifyBotBearer(`Bearer ${TOKEN}`), false);
 });
 
-await withToken(TOKEN, () => {
+await withToken(TOKEN, async () => {
   assert.equal(verifyBotApiToken(TOKEN), true);
   assert.equal(verifyBotApiToken(OTHER), false);
   assert.equal(verifyBotBearer(`Bearer ${TOKEN}`), true);
@@ -153,21 +187,78 @@ await withToken(TOKEN, () => {
   const badStatus = parseTaskListQuery(new URLSearchParams("status=inbox,nope"));
   assert.equal(badStatus.status, 400);
 
-  const rejected = parseBotTaskPatch({ status: "done", description: "no" });
-  assert.equal(rejected.status, 403);
+  const statusPatch = parseBotTaskPatch({ status: "done", description: "no" }, flow.id);
+  assert.equal(statusPatch.ok, true);
+  assert.equal(statusPatch.patch.status, "done");
+  assert.equal(statusPatch.patch.description, "no");
 
-  const assigneeRejected = parseBotTaskPatch({ assignee_type: "human" });
-  assert.equal(assigneeRejected.status, 403);
+  const assigneeHuman = parseBotTaskPatch({ assignee_type: "human" }, flow.id);
+  assert.equal(assigneeHuman.ok, true);
+  assert.equal(assigneeHuman.patch.assigneeType, "human");
+  assert.equal(assigneeHuman.patch.botId, null);
 
-  const archivedRejected = parseBotTaskPatch({ archived_at: "2026-01-01T00:00:00.000Z" });
-  assert.equal(archivedRejected.status, 403);
+  const archivedPatch = parseBotTaskPatch({ archived_at: "2026-01-01T00:00:00.000Z" }, flow.id);
+  assert.equal(archivedPatch.ok, true);
+  assert.equal(archivedPatch.patch.archivedAt, "2026-01-01T00:00:00.000Z");
 
-  const botIdRejected = parseBotTaskPatch({ bot_id: flow.id });
-  assert.equal(botIdRejected.status, 403);
+  const unarchivePatch = parseBotTaskPatch({ archived_at: null }, flow.id);
+  assert.equal(unarchivePatch.ok, true);
+  assert.equal(unarchivePatch.patch.archivedAt, null);
+
+  const botIdPatch = parseBotTaskPatch({ bot_id: flow.id }, flow.id);
+  assert.equal(botIdPatch.ok, true);
+  assert.equal(botIdPatch.patch.assigneeType, "bot");
+  assert.equal(botIdPatch.patch.botId, flow.id);
+
+  const botTypeDefaultsSelf = parseBotTaskPatch({ assignee_type: "bot" }, flow.id);
+  assert.equal(botTypeDefaultsSelf.ok, true);
+  assert.equal(botTypeDefaultsSelf.patch.assigneeType, "bot");
+  assert.equal(botTypeDefaultsSelf.patch.botId, flow.id);
+
+  const invalidStatus = parseBotTaskPatch({ status: "nope" }, flow.id);
+  assert.equal(invalidStatus.status, 400);
+  assert.equal(invalidStatus.body.error, "Invalid status");
+
+  const invalidAssignee = parseBotTaskPatch({ assignee_type: "alien" }, flow.id);
+  assert.equal(invalidAssignee.status, 400);
+
+  const humanWithBotId = parseBotTaskPatch(
+    { assignee_type: "human", bot_id: flow.id },
+    flow.id
+  );
+  assert.equal(humanWithBotId.status, 400);
+
+  const invalidArchived = parseBotTaskPatch({ archived_at: "not-a-date" }, flow.id);
+  assert.equal(invalidArchived.status, 400);
+
+  const botWithoutId = parseBotTaskPatch({ assignee_type: "bot" });
+  assert.equal(botWithoutId.status, 400);
 
   const okPatch = parseBotTaskPatch({ description: "nuevo cuerpo" });
   assert.equal(okPatch.ok, true);
   assert.equal(okPatch.patch.description, "nuevo cuerpo");
+
+  const scopedOk = await assertPatchAssigneeInProject({
+    patch: { assigneeType: "bot", botId: flow.id },
+    projectId: flow.project_id,
+    getBot: botsById(flow, home),
+  });
+  assert.equal(scopedOk.ok, true);
+
+  const scopedForeign = await assertPatchAssigneeInProject({
+    patch: { assigneeType: "bot", botId: home.id },
+    projectId: flow.project_id,
+    getBot: botsById(flow, home),
+  });
+  assert.equal(scopedForeign.status, 403);
+  assert.equal(scopedForeign.body.error, "Bot does not belong to this project");
+
+  const scopedMissing = await assertPatchAssigneeInProject({
+    patch: { assigneeType: "bot", botId: "missing-bot" },
+    projectId: flow.project_id,
+    getBot: botsById(flow),
+  });
+  assert.equal(scopedMissing.status, 400);
 
   const createOk = parseBotTaskCreate({ title: "Nueva inbox" }, flow.id);
   assert.equal(createOk.ok, true);
@@ -265,14 +356,174 @@ await withToken(TOKEN, async () => {
   });
   assert.equal(missingTask.status, 404);
 
-  const statusRejected = await handlePatchBotTask({
+  const crossProjectPatch = await handlePatchBotTask({
     botId: flow.id,
-    taskId: ownTask.id,
+    taskId: foreignTask.id,
     body: { status: "done" },
     bearerOk: true,
     deps: baseDeps(),
   });
-  assert.equal(statusRejected.status, 403, "status patch rejected");
+  assert.equal(crossProjectPatch.status, 404, "cross-project patch 404");
+  assert.equal(crossProjectPatch.body.error, "Task not found");
+
+  let moved = null;
+  const statusOk = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { status: "done" },
+    bearerOk: true,
+    deps: baseDeps({
+      updateBotProjectTask: async (taskId, patch, actor) => {
+        moved = { taskId, patch, actor };
+        return { ...ownTask, status: patch.status };
+      },
+    }),
+  });
+  assert.equal(statusOk.status, 200, "status patch allowed");
+  assert.equal(statusOk.body.task.status, "done");
+  assert.equal(moved.patch.status, "done");
+  assert.equal(moved.actor, "bot:Flow");
+
+  for (const status of ["inbox", "doing", "review", "done"]) {
+    const result = await handlePatchBotTask({
+      botId: flow.id,
+      taskId: ownTask.id,
+      body: { status },
+      bearerOk: true,
+      deps: baseDeps({
+        updateBotProjectTask: async (_taskId, patch) => ({ ...ownTask, status: patch.status }),
+      }),
+    });
+    assert.equal(result.status, 200, `status ${status} allowed`);
+    assert.equal(result.body.task.status, status);
+  }
+
+  const invalidStatusPatch = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { status: "blocked" },
+    bearerOk: true,
+    deps: baseDeps(),
+  });
+  assert.equal(invalidStatusPatch.status, 400);
+
+  let assigned = null;
+  const assignHuman = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { assignee_type: "human" },
+    bearerOk: true,
+    deps: baseDeps({
+      updateBotProjectTask: async (taskId, patch, actor) => {
+        assigned = { taskId, patch, actor };
+        return { ...ownTask, assignee_type: "human", bot_id: null };
+      },
+    }),
+  });
+  assert.equal(assignHuman.status, 200);
+  assert.equal(assigned.patch.assigneeType, "human");
+  assert.equal(assigned.patch.botId, null);
+  assert.equal(assigned.actor, "bot:Flow");
+
+  const assignSelf = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { assignee_type: "bot" },
+    bearerOk: true,
+    deps: baseDeps({
+      updateBotProjectTask: async (_taskId, patch) => ({
+        ...ownTask,
+        assignee_type: patch.assigneeType,
+        bot_id: patch.botId,
+      }),
+    }),
+  });
+  assert.equal(assignSelf.status, 200);
+  assert.equal(assignSelf.body.task.assignee_type, "bot");
+  assert.equal(assignSelf.body.task.bot_id, flow.id);
+
+  const assignSameProjectBot = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { assignee_type: "bot", bot_id: flowHelper.id },
+    bearerOk: true,
+    deps: baseDeps({
+      updateBotProjectTask: async (_taskId, patch) => ({
+        ...ownTask,
+        assignee_type: patch.assigneeType,
+        bot_id: patch.botId,
+      }),
+    }),
+  });
+  assert.equal(assignSameProjectBot.status, 200);
+  assert.equal(assignSameProjectBot.body.task.bot_id, flowHelper.id);
+
+  const assignForeignBot = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { assignee_type: "bot", bot_id: home.id },
+    bearerOk: true,
+    deps: baseDeps(),
+  });
+  assert.equal(assignForeignBot.status, 403);
+  assert.equal(assignForeignBot.body.error, "Bot does not belong to this project");
+
+  const assignMissingBot = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { assignee_type: "bot", bot_id: "00000000-0000-4000-8000-000000000000" },
+    bearerOk: true,
+    deps: baseDeps(),
+  });
+  assert.equal(assignMissingBot.status, 400);
+
+  let archived = null;
+  const archiveOk = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { archived_at: "2026-09-25T10:00:00.000Z" },
+    bearerOk: true,
+    deps: baseDeps({
+      updateBotProjectTask: async (taskId, patch, actor) => {
+        archived = { taskId, patch, actor };
+        return { ...ownTask, archived_at: "2026-09-25T10:00:00.000Z" };
+      },
+    }),
+  });
+  assert.equal(archiveOk.status, 200);
+  assert.equal(archived.patch.archivedAt, "2026-09-25T10:00:00.000Z");
+  assert.equal(archived.actor, "bot:Flow");
+
+  const unarchiveOk = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { archived_at: null },
+    bearerOk: true,
+    deps: baseDeps({
+      updateBotProjectTask: async (_taskId, patch) => ({
+        ...ownTask,
+        archived_at: patch.archivedAt,
+      }),
+    }),
+  });
+  assert.equal(unarchiveOk.status, 200);
+  assert.equal(unarchiveOk.body.task.archived_at, null);
+
+  const blockedDoing = await handlePatchBotTask({
+    botId: flow.id,
+    taskId: ownTask.id,
+    body: { status: "doing" },
+    bearerOk: true,
+    deps: baseDeps({
+      updateBotProjectTask: async () => {
+        throw new DependencyBlockError([
+          { id: "blocker-1", title: "Dependencia", status: "inbox", archived_at: null },
+        ]);
+      },
+    }),
+  });
+  assert.equal(blockedDoing.status, 409);
+  assert.equal(blockedDoing.body.blockers.length, 1);
 
   let updated = null;
   const descriptionOk = await handlePatchBotTask({

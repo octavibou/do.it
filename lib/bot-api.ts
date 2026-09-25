@@ -1,4 +1,4 @@
-import type { Bot, BotTaskCreate, BotTaskPatch, Priority, Project, TaskStatus, TaskSummary } from "./types";
+import type { AssigneeType, Bot, BotTaskCreate, BotTaskPatch, Priority, Project, TaskStatus, TaskSummary } from "./types";
 
 const TASK_STATUS_VALUES: readonly TaskStatus[] = ["inbox", "doing", "review", "done"];
 const PRIORITY_VALUES: readonly Priority[] = ["low", "medium", "high", "urgent"];
@@ -37,7 +37,12 @@ export type BotApiDeps = {
   ) => Promise<unknown>;
 };
 
-const FORBIDDEN_PATCH_KEYS = new Set([
+const ALLOWED_PATCH_KEYS = new Set([
+  "description",
+  "title",
+  "priority",
+  "due_at",
+  "dueAt",
   "status",
   "assignee_type",
   "assigneeType",
@@ -46,8 +51,6 @@ const FORBIDDEN_PATCH_KEYS = new Set([
   "archived_at",
   "archivedAt",
 ]);
-
-const ALLOWED_PATCH_KEYS = new Set(["description", "title", "priority", "due_at", "dueAt"]);
 
 const FORBIDDEN_CREATE_KEYS = new Set([
   "archived_at",
@@ -131,7 +134,26 @@ export function parseTaskListQuery(searchParams: URLSearchParams):
   return { ok: true, filters: { statuses, includeArchived } };
 }
 
-export function parseBotTaskPatch(body: unknown): { ok: true; patch: BotTaskPatch } | BotApiResult {
+function parseOptionalIso(
+  value: unknown,
+  field: string
+): { ok: true; value: string | null } | BotApiResult {
+  if (value !== null && typeof value !== "string") {
+    return jsonError(400, `${field} must be a string or null`);
+  }
+  if (typeof value === "string" && value.trim() !== "" && Number.isNaN(Date.parse(value))) {
+    return jsonError(400, `Invalid ${field}`);
+  }
+  return {
+    ok: true,
+    value: value === null || (typeof value === "string" && value.trim() === "") ? null : value,
+  };
+}
+
+export function parseBotTaskPatch(
+  body: unknown,
+  selfBotId?: string
+): { ok: true; patch: BotTaskPatch } | BotApiResult {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return jsonError(400, "JSON object required");
   }
@@ -142,11 +164,6 @@ export function parseBotTaskPatch(body: unknown): { ok: true; patch: BotTaskPatc
     return jsonError(400, "No fields to update");
   }
 
-  const forbidden = keys.filter((key) => FORBIDDEN_PATCH_KEYS.has(key));
-  if (forbidden.length > 0) {
-    return jsonError(403, "Cannot change status, assignee_type, bot_id, or archived_at");
-  }
-
   const unknown = keys.filter((key) => !ALLOWED_PATCH_KEYS.has(key));
   if (unknown.length > 0) {
     return jsonError(400, `Unknown field: ${unknown.join(", ")}`);
@@ -154,6 +171,15 @@ export function parseBotTaskPatch(body: unknown): { ok: true; patch: BotTaskPatc
 
   if (record.due_at !== undefined && record.dueAt !== undefined) {
     return jsonError(400, "Use due_at or dueAt, not both");
+  }
+  if (record.assignee_type !== undefined && record.assigneeType !== undefined) {
+    return jsonError(400, "Use assignee_type or assigneeType, not both");
+  }
+  if (record.bot_id !== undefined && record.botId !== undefined) {
+    return jsonError(400, "Use bot_id or botId, not both");
+  }
+  if (record.archived_at !== undefined && record.archivedAt !== undefined) {
+    return jsonError(400, "Use archived_at or archivedAt, not both");
   }
 
   const patch: BotTaskPatch = {};
@@ -181,13 +207,73 @@ export function parseBotTaskPatch(body: unknown): { ok: true; patch: BotTaskPatc
 
   const dueValue = record.due_at !== undefined ? record.due_at : record.dueAt;
   if (dueValue !== undefined) {
-    if (dueValue !== null && typeof dueValue !== "string") {
-      return jsonError(400, "due_at must be a string or null");
+    const parsedDue = parseOptionalIso(dueValue, "due_at");
+    if (!("ok" in parsedDue)) {
+      return parsedDue;
     }
-    if (typeof dueValue === "string" && dueValue.trim() !== "" && Number.isNaN(Date.parse(dueValue))) {
-      return jsonError(400, "Invalid due_at");
+    patch.dueAt = parsedDue.value;
+  }
+
+  if (record.status !== undefined) {
+    if (!TASK_STATUS_VALUES.includes(record.status as TaskStatus)) {
+      return jsonError(400, "Invalid status");
     }
-    patch.dueAt = dueValue === null || (typeof dueValue === "string" && dueValue.trim() === "") ? null : dueValue;
+    patch.status = record.status as TaskStatus;
+  }
+
+  const assigneeTypeRaw =
+    record.assignee_type !== undefined ? record.assignee_type : record.assigneeType;
+  const botIdRaw = record.bot_id !== undefined ? record.bot_id : record.botId;
+
+  if (assigneeTypeRaw !== undefined) {
+    if (assigneeTypeRaw !== "human" && assigneeTypeRaw !== "bot") {
+      return jsonError(400, "Invalid assignee_type");
+    }
+  }
+
+  if (botIdRaw !== undefined && botIdRaw !== null && typeof botIdRaw !== "string") {
+    return jsonError(400, "bot_id must be a string or null");
+  }
+
+  if (assigneeTypeRaw !== undefined || botIdRaw !== undefined) {
+    const requestedBotId =
+      botIdRaw === undefined
+        ? undefined
+        : botIdRaw === null || (typeof botIdRaw === "string" && botIdRaw.trim() === "")
+          ? null
+          : botIdRaw;
+    const resolvedAssignee: AssigneeType | undefined =
+      assigneeTypeRaw === "human" || assigneeTypeRaw === "bot"
+        ? assigneeTypeRaw
+        : requestedBotId
+          ? "bot"
+          : requestedBotId === null
+            ? "human"
+            : undefined;
+
+    if (resolvedAssignee === "human") {
+      if (requestedBotId) {
+        return jsonError(400, "human assignee cannot have bot_id");
+      }
+      patch.assigneeType = "human";
+      patch.botId = null;
+    } else if (resolvedAssignee === "bot") {
+      const resolvedBotId = requestedBotId ?? selfBotId ?? null;
+      if (!resolvedBotId) {
+        return jsonError(400, "bot_id required when assignee_type is bot");
+      }
+      patch.assigneeType = "bot";
+      patch.botId = resolvedBotId;
+    }
+  }
+
+  const archivedValue = record.archived_at !== undefined ? record.archived_at : record.archivedAt;
+  if (archivedValue !== undefined) {
+    const parsedArchived = parseOptionalIso(archivedValue, "archived_at");
+    if (!("ok" in parsedArchived)) {
+      return parsedArchived;
+    }
+    patch.archivedAt = parsedArchived.value;
   }
 
   if (Object.keys(patch).length === 0) {
@@ -195,6 +281,31 @@ export function parseBotTaskPatch(body: unknown): { ok: true; patch: BotTaskPatc
   }
 
   return { ok: true, patch };
+}
+
+export async function assertPatchAssigneeInProject(input: {
+  patch: BotTaskPatch;
+  projectId: string;
+  getBot: (id: string) => Promise<{ project_id: string } | null>;
+}): Promise<{ ok: true } | BotApiResult> {
+  if (input.patch.assigneeType !== "bot") {
+    return { ok: true };
+  }
+
+  const botId = input.patch.botId;
+  if (!botId) {
+    return jsonError(400, "bot_id required when assignee_type is bot");
+  }
+
+  const assigneeBot = await input.getBot(botId);
+  if (!assigneeBot) {
+    return jsonError(400, "Invalid bot_id");
+  }
+  if (assigneeBot.project_id !== input.projectId) {
+    return jsonError(403, "Bot does not belong to this project");
+  }
+
+  return { ok: true };
 }
 
 export function parseBotTaskCreate(
@@ -444,24 +555,51 @@ export async function handlePatchBotTask(input: {
     return context;
   }
 
-  const parsed = parseBotTaskPatch(input.body);
+  const parsed = parseBotTaskPatch(input.body, context.bot.id);
   if (!("ok" in parsed)) {
     return parsed;
   }
 
-  const task = await input.deps.updateBotProjectTask(
-    input.taskId,
-    parsed.patch,
-    botActor(context.bot.name)
-  );
+  const assigneeScope = await assertPatchAssigneeInProject({
+    patch: parsed.patch,
+    projectId: context.task.project_id,
+    getBot: input.deps.getBot,
+  });
+  if (!("ok" in assigneeScope)) {
+    return assigneeScope;
+  }
 
-  return {
-    status: 200,
-    body: {
-      bot: serializeBot(context.bot),
-      task,
-    },
-  };
+  try {
+    const task = await input.deps.updateBotProjectTask(
+      input.taskId,
+      parsed.patch,
+      botActor(context.bot.name)
+    );
+
+    return {
+      status: 200,
+      body: {
+        bot: serializeBot(context.bot),
+        task,
+      },
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "DependencyBlockError") {
+      const blockers =
+        "blockers" in error && Array.isArray(error.blockers) ? error.blockers : [];
+      return {
+        status: 409,
+        body: {
+          error: error.message,
+          blockers,
+        },
+      };
+    }
+    if (error instanceof Error && error.name === "AssigneeBotError") {
+      return jsonError(403, error.message);
+    }
+    throw error;
+  }
 }
 
 export async function handlePostBotTask(input: {

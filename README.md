@@ -10,7 +10,7 @@ Backlog único de Octavi: proyectos, humanos y bots. Sustituye webhooks de Notio
 - Vista de trabajo de cada bot (tareas **En curso**)
 - Webhook al pasar a En curso si el asignado es un bot
 - Auth mínima: contraseña compartida (`APP_PASSWORD`)
-- Bot API: listar y actualizar `description` con `Authorization: Bearer <BOT_API_TOKEN>`
+- Bot API: cada bot gestiona las tareas de **su proyecto** (listar, crear en Inbox, editar, mover estado, asignar, archivar) con `Authorization: Bearer <BOT_API_TOKEN>`
 
 ## v2 (campos must-have)
 
@@ -69,10 +69,12 @@ Los datos de negocio solo se leen/escriben en el servidor con la service role. R
 
 ## Webhook `task.doing`
 
-Se dispara cuando:
+Se dispara cuando (misma regla en la UI y en `PATCH` de la Bot API):
 
 1. el estado pasa a `doing`, y el asignado es `bot`, o
 2. el asignado pasa a `bot` mientras la tarea ya está en `doing`.
+
+El POST va a `bots.webhook_url` del asignado, no del caller. Si un bot se autoasigna y mueve a `doing`, recibe su propio webhook; no se filtran auto-bucles.
 
 `POST` a `bots.webhook_url` con JSON:
 
@@ -115,7 +117,7 @@ Auth de bots:
 Authorization: Bearer $BOT_API_TOKEN
 ```
 
-`:id` tiene que ser un bot real. El bot solo ve y crea tareas de su `project_id`. No puede cambiar `status`, `assignee_type`, `bot_id` ni `archived_at` en PATCH. En CREATE el estado es siempre `inbox`.
+`:id` tiene que ser un bot real. El bot solo ve, crea y muta tareas de su `project_id`. Una tarea de otro proyecto responde **404**. En CREATE el estado es siempre `inbox`. En PATCH el bot tiene control total de las tareas de su proyecto (estado, asignado, archivo y campos normales).
 
 ```http
 GET /api/bots/:id/current
@@ -131,7 +133,24 @@ PATCH /api/bots/:id/tasks/:taskId
 
 Si el título es muy parecido a una tarea abierta del mismo proyecto (misma regla anti-dup que la UI), responde **409** con `duplicates`. No hay `forceCreate` por API: usa GET/PATCH de la existente.
 
-`PATCH` acepta JSON `{ "description": "…" }` y, opcionalmente, `title`, `priority`, `due_at`. Escribe `task_events` con `action=update` y `actor=bot:<nombre>`.
+`PATCH` acepta cualquier combinación de:
+
+| Campo | Valores | Notas |
+| --- | --- | --- |
+| `title` | string no vacío | |
+| `description` | string o `null` | |
+| `priority` | `low\|medium\|high\|urgent` o `null` | |
+| `due_at` / `dueAt` | ISO-8601 o `null` | |
+| `status` | `inbox` \| `doing` \| `review` \| `done` | Misma máquina de estados que la UI. Pasar a `doing` respeta dependencias duras (bloqueadores sin `done` → **409** con `blockers`). No hay diálogo de confirmación al salir de Inbox: el PATCH **es** la confirmación. No hay `overrideStart` por API. |
+| `assignee_type` / `assigneeType` | `human` \| `bot` | `human` limpia `bot_id`. `bot` exige `bot_id` (si se omite, se asigna al bot del path `:id`). |
+| `bot_id` / `botId` | UUID o `null` | Solo un bot del **mismo** `project_id` que la tarea. Otro proyecto → **403**. `bot_id` inexistente → **400**. |
+| `archived_at` / `archivedAt` | ISO-8601 o `null` | `null` restaura. Cualquier ISO válido archiva (el servidor pone `archived_at = now()`, no el timestamp enviado). |
+
+Campos desconocidos → **400**. Valores de enum inválidos → **400**. Tarea de otro proyecto → **404**.
+
+Los `task_events` usan las mismas `action` que la UI (`status_change`, `assignee_change`, `priority_change`, `update`, `archive`) con `actor=bot:<nombre>`.
+
+Webhook `task.doing`: un PATCH que deja la tarea en `doing` con asignado `bot` dispara el mismo webhook que la UI (`shouldDispatchDoingWebhook`: entra en `doing` o el asignado pasa a `bot` estando ya en `doing`). Si Flow se asigna la tarea y la mueve a `doing`, Flow recibe el POST; **no** se suprimen auto-bucles. CREATE sigue sin disparar webhook (siempre Inbox).
 
 Ejemplos:
 
@@ -152,6 +171,40 @@ curl -sS -X PATCH "$BASE/api/bots/$BOT/tasks/$TASK" \
   -H "Authorization: Bearer $BOT_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"description":"## Por qué\nActualizar el cuerpo desde Flow."}'
+
+# Mover a En curso y asignarse
+curl -sS -X PATCH "$BASE/api/bots/$BOT/tasks/$TASK" \
+  -H "Authorization: Bearer $BOT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"doing","assignee_type":"bot","bot_id":"'"$BOT"'"}'
+
+# Devolver a humano y marcar Hecho
+curl -sS -X PATCH "$BASE/api/bots/$BOT/tasks/$TASK" \
+  -H "Authorization: Bearer $BOT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"done","assignee_type":"human"}'
+
+# Archivar / restaurar
+curl -sS -X PATCH "$BASE/api/bots/$BOT/tasks/$TASK" \
+  -H "Authorization: Bearer $BOT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"archived_at":"2026-09-25T10:00:00.000Z"}'
+
+curl -sS -X PATCH "$BASE/api/bots/$BOT/tasks/$TASK" \
+  -H "Authorization: Bearer $BOT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"archived_at":null}'
+```
+
+Cuerpos PATCH de ejemplo:
+
+```json
+{ "status": "review" }
+{ "status": "doing", "assignee_type": "bot" }
+{ "assignee_type": "human" }
+{ "assignee_type": "bot", "bot_id": "7d765d6a-63aa-4d4d-9914-0b3d26dee739" }
+{ "title": "Nuevo título", "priority": "urgent", "due_at": "2026-10-01T12:00:00.000Z" }
+{ "archived_at": null }
 ```
 
 `GET /api/bots/:id/current` sigue devolviendo el bot y sus tareas en `doing` (Bearer o cookie).

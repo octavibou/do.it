@@ -57,7 +57,8 @@ export default function SettingsPage() {
         </p>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Las llamadas de bots a la API usan el secreto <code>BOT_API_TOKEN</code> en
-          Vercel. No se muestra aquí.
+          Vercel. No se muestra aquí. Cada bot puede listar, crear, editar, mover,
+          asignar y archivar las tareas de <strong>su</strong> proyecto.
         </p>
       </div>
       <Suspense fallback={<CardsSkeleton />}>
