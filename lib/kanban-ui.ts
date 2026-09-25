@@ -1,5 +1,6 @@
+import { cn } from "cn";
+
 import type { TaskStatus } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 export function isDoneColumn(status: TaskStatus): boolean {
   return status === "done";
