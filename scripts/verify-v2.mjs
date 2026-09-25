@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 
 import { findSimilarTitles, isStrongTitleMatch, normalizeTitle } from "../lib/duplicates.ts";
 import { chunkIds, joinDependencyMaps, uniqueDependencyEdges } from "../lib/task-deps.ts";
-import { isDoneColumn, kanbanColumnClassName, taskCardClassName } from "../lib/kanban-ui.ts";
+import { appShellContainerClassName, isProjectBoardPath } from "../lib/app-shell.ts";
+import {
+  isDoneColumn,
+  kanbanBoardColumnsClassName,
+  kanbanColumnClassName,
+  taskCardClassName,
+} from "../lib/kanban-ui.ts";
 import { PRIORITY_LABELS } from "../lib/labels.ts";
 import {
   canEnterDoing,
@@ -133,5 +139,23 @@ assert.match(doingColumn, /bg-muted/);
 assert.match(taskCardClassName({ compact: true }), /emerald/);
 assert.doesNotMatch(taskCardClassName({}), /emerald/);
 assert.match(kanbanColumnClassName("done", { isOver: true }), /ring-2/);
+assert.match(kanbanColumnClassName("inbox"), /flex-1/);
+assert.match(kanbanColumnClassName("inbox"), /min-w/);
+assert.doesNotMatch(kanbanBoardColumnsClassName(), /grid-cols-4/);
+assert.match(kanbanBoardColumnsClassName(), /overflow-x-auto/);
+assert.match(kanbanBoardColumnsClassName({ skeleton: true }), /overflow-hidden/);
+
+assert.equal(isProjectBoardPath("/projects/leadflow"), true);
+assert.equal(isProjectBoardPath("/projects/leadflow/"), true);
+assert.equal(isProjectBoardPath("/"), false);
+assert.equal(isProjectBoardPath("/bots"), false);
+assert.equal(isProjectBoardPath("/settings"), false);
+assert.equal(isProjectBoardPath("/projects"), false);
+assert.equal(isProjectBoardPath("/projects/leadflow/extra"), false);
+assert.match(appShellContainerClassName("/projects/leadflow"), /max-w-none/);
+assert.match(appShellContainerClassName("/"), /max-w-6xl/);
+assert.doesNotMatch(appShellContainerClassName("/"), /max-w-none/);
+assert.doesNotMatch(appShellContainerClassName("/bots"), /max-w-none/);
+assert.doesNotMatch(appShellContainerClassName("/settings"), /max-w-none/);
 
 console.log("v2 rules ok");

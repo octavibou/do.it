@@ -37,7 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { isDoneColumn, kanbanColumnClassName } from "@/lib/kanban-ui";
+import { isDoneColumn, kanbanBoardColumnsClassName, kanbanColumnClassName } from "@/lib/kanban-ui";
 import { INBOX_GATE_COPY, STATUS_LABELS, STATUS_ORDER, TASK_SORT_LABELS } from "@/lib/labels";
 import { isDueThisWeek, isOverdue, sortTasks, TASK_SORT_MODES, type TaskSortMode } from "@/lib/task-rules";
 import { cn } from "@/lib/utils";
@@ -305,7 +305,7 @@ export function KanbanBoard({
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
         >
-          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-4 md:mx-0 md:grid md:grid-cols-4 md:overflow-visible md:px-0">
+          <div className={kanbanBoardColumnsClassName()}>
             {STATUS_ORDER.map((status) => (
               <Column
                 key={status}

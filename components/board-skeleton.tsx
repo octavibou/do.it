@@ -1,4 +1,4 @@
-import { isDoneColumn, kanbanColumnClassName } from "@/lib/kanban-ui";
+import { isDoneColumn, kanbanBoardColumnsClassName, kanbanColumnClassName } from "@/lib/kanban-ui";
 import { STATUS_LABELS, STATUS_ORDER } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
@@ -10,7 +10,7 @@ export function BoardSkeleton({ projectName }: { projectName?: string }) {
         <h1 className="text-2xl font-medium tracking-tight">{projectName ?? "Cargando tablero…"}</h1>
         <p className="mt-1 max-w-xl text-xs text-muted-foreground">Preparando columnas y tarjetas.</p>
       </div>
-      <div className="-mx-4 flex gap-3 overflow-hidden px-4 md:mx-0 md:grid md:grid-cols-4 md:px-0">
+      <div className={kanbanBoardColumnsClassName({ skeleton: true })}>
         {STATUS_ORDER.map((status) => {
           const compact = isDoneColumn(status);
           return (
