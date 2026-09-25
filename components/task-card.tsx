@@ -20,20 +20,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { taskCardClassName } from "@/lib/kanban-ui";
 import { nextStatus, prevStatus, PRIORITY_LABELS, PRIORITY_ORDER, STATUS_LABELS } from "@/lib/labels";
 import { incompleteBlockers } from "@/lib/task-rules";
-import { cn } from "@/lib/utils";
 import type { Priority, TaskWithRelations } from "@/lib/types";
 
 export function TaskCard({
   task,
   slug,
+  compact = false,
   dragDisabled = false,
   onOpen,
   onRequestMove,
 }: {
   task: TaskWithRelations;
   slug: string;
+  compact?: boolean;
   dragDisabled?: boolean;
   onOpen?: () => void;
   onRequestMove?: (task: TaskWithRelations, status: TaskWithRelations["status"]) => void;
@@ -73,90 +75,120 @@ export function TaskCard({
     <article
       ref={sortable.setNodeRef}
       style={style}
-      className={cn(
-        "rounded-xl bg-background p-3 ring-1 ring-foreground/10",
-        sortable.isDragging && "opacity-60",
-        task.archived_at && "opacity-70"
-      )}
+      className={taskCardClassName({
+        compact,
+        isDragging: sortable.isDragging,
+        archived: Boolean(task.archived_at),
+      })}
     >
-      <div className="flex items-start gap-2">
-        {dragDisabled ? null : (
+      {compact ? (
+        <div className="flex items-center gap-1.5">
+          {dragDisabled ? null : (
+            <button
+              type="button"
+              className="hidden shrink-0 cursor-grab text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:block"
+              aria-label="Arrastrar"
+              {...sortable.attributes}
+              {...sortable.listeners}
+            >
+              <GripVertical className="size-3.5" />
+            </button>
+          )}
           <button
             type="button"
-            className="mt-0.5 hidden cursor-grab text-muted-foreground md:block"
-            aria-label="Arrastrar"
-            {...sortable.attributes}
-            {...sortable.listeners}
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={onOpen}
           >
-            <GripVertical className="size-4" />
+            <h3 className="min-w-0 flex-1 truncate text-sm font-medium leading-5" title={task.title}>
+              {task.title}
+            </h3>
+            <span className="shrink-0">
+              <CreatedBadge createdAt={task.created_at} />
+            </span>
           </button>
-        )}
-        <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
-          <h3 className="text-sm font-medium leading-snug">{task.title}</h3>
-          {task.description ? (
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{task.description}</p>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-start gap-2">
+            {dragDisabled ? null : (
+              <button
+                type="button"
+                className="mt-0.5 hidden cursor-grab text-muted-foreground md:block"
+                aria-label="Arrastrar"
+                {...sortable.attributes}
+                {...sortable.listeners}
+              >
+                <GripVertical className="size-4" />
+              </button>
+            )}
+            <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
+              <h3 className="text-sm font-medium leading-snug">{task.title}</h3>
+              {task.description ? (
+                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{task.description}</p>
+              ) : null}
+            </button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <AssigneeBadge type={task.assignee_type} botName={task.bot?.name} />
+            <PriorityBadge priority={task.priority} />
+            <CreatedBadge createdAt={task.created_at} />
+            <DueBadge dueAt={task.due_at} status={task.status} />
+            {blocked.length > 0 ? (
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <Lock className="size-3" />
+                Bloqueada
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-2">
+            <Select value={task.priority ?? "none"} onValueChange={changePriority}>
+              <SelectTrigger size="sm" className="h-7 w-full text-xs">
+                <SelectValue placeholder="Prioridad" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">sin prioridad</SelectItem>
+                {PRIORITY_ORDER.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {PRIORITY_LABELS[value]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {task.webhook_error ? (
+            <Alert variant="destructive" className="mt-2">
+              <AlertDescription>
+                {task.webhook_error}
+                <Button type="button" variant="ghost" size="xs" className="mt-1" onClick={retry}>
+                  Reintentar webhook
+                </Button>
+              </AlertDescription>
+            </Alert>
           ) : null}
-        </button>
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <AssigneeBadge type={task.assignee_type} botName={task.bot?.name} />
-        <PriorityBadge priority={task.priority} />
-        <CreatedBadge createdAt={task.created_at} />
-        <DueBadge dueAt={task.due_at} status={task.status} />
-        {blocked.length > 0 ? (
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-            <Lock className="size-3" />
-            Bloqueada
-          </span>
-        ) : null}
-      </div>
-      <div className="mt-2">
-        <Select value={task.priority ?? "none"} onValueChange={changePriority}>
-          <SelectTrigger size="sm" className="h-7 w-full text-xs">
-            <SelectValue placeholder="Prioridad" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">sin prioridad</SelectItem>
-            {PRIORITY_ORDER.map((value) => (
-              <SelectItem key={value} value={value}>
-                {PRIORITY_LABELS[value]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      {task.webhook_error ? (
-        <Alert variant="destructive" className="mt-2">
-          <AlertDescription>
-            {task.webhook_error}
-            <Button type="button" variant="ghost" size="xs" className="mt-1" onClick={retry}>
-              Reintentar webhook
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={!back || !onRequestMove}
+              onClick={() => back && onRequestMove?.(task, back)}
+            >
+              <ChevronLeft className="size-3.5" />
+              {back ? STATUS_LABELS[back] : "—"}
             </Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          disabled={!back || !onRequestMove}
-          onClick={() => back && onRequestMove?.(task, back)}
-        >
-          <ChevronLeft className="size-3.5" />
-          {back ? STATUS_LABELS[back] : "—"}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          disabled={!forward || !onRequestMove}
-          onClick={() => forward && onRequestMove?.(task, forward)}
-        >
-          {forward ? STATUS_LABELS[forward] : "—"}
-          <ChevronRight className="size-3.5" />
-        </Button>
-      </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={!forward || !onRequestMove}
+              onClick={() => forward && onRequestMove?.(task, forward)}
+            >
+              {forward ? STATUS_LABELS[forward] : "—"}
+              <ChevronRight className="size-3.5" />
+            </Button>
+          </div>
+        </>
+      )}
     </article>
   );
 }

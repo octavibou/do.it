@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 
 import { findSimilarTitles, isStrongTitleMatch, normalizeTitle } from "../lib/duplicates.ts";
 import { chunkIds, joinDependencyMaps, uniqueDependencyEdges } from "../lib/task-deps.ts";
+import { appShellContainerClassName, isProjectBoardPath } from "../lib/app-shell.ts";
+import {
+  isDoneColumn,
+  kanbanBoardColumnsClassName,
+  kanbanColumnClassName,
+  taskCardClassName,
+} from "../lib/kanban-ui.ts";
 import { PRIORITY_LABELS } from "../lib/labels.ts";
 import {
   canEnterDoing,
@@ -114,5 +121,41 @@ const joined = joinDependencyMaps(["a", "b"], [{ blocker_task_id: "a", blocked_t
 assert.deepEqual(joined.get("b")?.blocked_by.map((row) => row.id), ["a"]);
 assert.deepEqual(joined.get("a")?.blocks.map((row) => row.id), ["b"]);
 assert.equal(joined.get("b")?.blocks.length, 0);
+
+assert.equal(isDoneColumn("done"), true);
+assert.equal(isDoneColumn("inbox"), false);
+assert.equal(isDoneColumn("doing"), false);
+assert.equal(isDoneColumn("review"), false);
+
+const doneColumn = kanbanColumnClassName("done");
+const inboxColumn = kanbanColumnClassName("inbox");
+const doingColumn = kanbanColumnClassName("doing");
+const reviewColumn = kanbanColumnClassName("review");
+assert.match(doneColumn, /emerald/);
+assert.doesNotMatch(inboxColumn, /emerald/);
+assert.doesNotMatch(doingColumn, /emerald/);
+assert.doesNotMatch(reviewColumn, /emerald/);
+assert.match(doingColumn, /bg-muted/);
+assert.match(taskCardClassName({ compact: true }), /emerald/);
+assert.doesNotMatch(taskCardClassName({}), /emerald/);
+assert.match(kanbanColumnClassName("done", { isOver: true }), /ring-2/);
+assert.match(kanbanColumnClassName("inbox"), /flex-1/);
+assert.match(kanbanColumnClassName("inbox"), /min-w/);
+assert.doesNotMatch(kanbanBoardColumnsClassName(), /grid-cols-4/);
+assert.match(kanbanBoardColumnsClassName(), /overflow-x-auto/);
+assert.match(kanbanBoardColumnsClassName({ skeleton: true }), /overflow-hidden/);
+
+assert.equal(isProjectBoardPath("/projects/leadflow"), true);
+assert.equal(isProjectBoardPath("/projects/leadflow/"), true);
+assert.equal(isProjectBoardPath("/"), false);
+assert.equal(isProjectBoardPath("/bots"), false);
+assert.equal(isProjectBoardPath("/settings"), false);
+assert.equal(isProjectBoardPath("/projects"), false);
+assert.equal(isProjectBoardPath("/projects/leadflow/extra"), false);
+assert.match(appShellContainerClassName("/projects/leadflow"), /max-w-none/);
+assert.match(appShellContainerClassName("/"), /max-w-6xl/);
+assert.doesNotMatch(appShellContainerClassName("/"), /max-w-none/);
+assert.doesNotMatch(appShellContainerClassName("/bots"), /max-w-none/);
+assert.doesNotMatch(appShellContainerClassName("/settings"), /max-w-none/);
 
 console.log("v2 rules ok");
