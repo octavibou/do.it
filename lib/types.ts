@@ -72,6 +72,10 @@ export type BotTaskPatch = {
   description?: string | null;
   priority?: Priority | null;
   dueAt?: string | null;
+  status?: TaskStatus;
+  assigneeType?: AssigneeType;
+  botId?: string | null;
+  archivedAt?: string | null;
 };
 
 export type BotTaskCreate = {

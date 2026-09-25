@@ -19,3 +19,10 @@ export class DuplicateTaskError extends Error {
     this.matches = matches;
   }
 }
+
+export class AssigneeBotError extends Error {
+  constructor(message = "Bot does not belong to this project") {
+    super(message);
+    this.name = "AssigneeBotError";
+  }
+}

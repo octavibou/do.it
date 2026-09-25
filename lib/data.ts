@@ -3,7 +3,7 @@ import "server-only";
 import { cache } from "react";
 
 import { findSimilarTitles } from "@/lib/duplicates";
-import { DependencyBlockError, DuplicateTaskError } from "@/lib/errors";
+import { AssigneeBotError, DependencyBlockError, DuplicateTaskError } from "@/lib/errors";
 import { formatAssigneeValue } from "@/lib/labels";
 import { logBoardOpen, measureAsync } from "@/lib/perf";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -573,6 +573,7 @@ export type TaskInput = {
   dueAt?: string | null;
   overrideStart?: boolean;
   forceCreate?: boolean;
+  actor?: string;
 };
 
 function normalizeAssignee(input: {
@@ -702,12 +703,13 @@ async function findDuplicateMatches(projectId: string, title: string, excludeId?
   return findSimilarTitles(title, (data ?? []) as TaskSummary[], excludeId);
 }
 
-function collectUpdateEvents(previous: Task, next: Task): EventInput[] {
+function collectUpdateEvents(previous: Task, next: Task, actor?: string): EventInput[] {
   const events: EventInput[] = [];
 
   if (previous.status !== next.status) {
     events.push({
       taskId: next.id,
+      actor,
       action: "status_change",
       fromValue: previous.status,
       toValue: next.status,
@@ -716,6 +718,7 @@ function collectUpdateEvents(previous: Task, next: Task): EventInput[] {
   if (previous.assignee_type !== next.assignee_type || previous.bot_id !== next.bot_id) {
     events.push({
       taskId: next.id,
+      actor,
       action: "assignee_change",
       fromValue: formatAssigneeValue(previous.assignee_type, previous.bot_id),
       toValue: formatAssigneeValue(next.assignee_type, next.bot_id),
@@ -724,6 +727,7 @@ function collectUpdateEvents(previous: Task, next: Task): EventInput[] {
   if (previous.priority !== next.priority) {
     events.push({
       taskId: next.id,
+      actor,
       action: "priority_change",
       fromValue: previous.priority,
       toValue: next.priority,
@@ -732,6 +736,7 @@ function collectUpdateEvents(previous: Task, next: Task): EventInput[] {
   if ((previous.due_at ?? null) !== (next.due_at ?? null)) {
     events.push({
       taskId: next.id,
+      actor,
       action: "update",
       fromValue: previous.due_at,
       toValue: next.due_at,
@@ -741,6 +746,7 @@ function collectUpdateEvents(previous: Task, next: Task): EventInput[] {
   if (previous.title !== next.title || (previous.description ?? "") !== (next.description ?? "")) {
     events.push({
       taskId: next.id,
+      actor,
       action: "update",
       fromValue: previous.title,
       toValue: next.title,
@@ -749,6 +755,16 @@ function collectUpdateEvents(previous: Task, next: Task): EventInput[] {
   }
 
   return events;
+}
+
+async function assertAssigneeBotInProject(botId: string, projectId: string) {
+  const assigneeBot = await getBot(botId);
+  if (!assigneeBot) {
+    throw new AssigneeBotError("Invalid bot_id");
+  }
+  if (assigneeBot.project_id !== projectId) {
+    throw new AssigneeBotError("Bot does not belong to this project");
+  }
 }
 
 export async function createTask(
@@ -828,12 +844,18 @@ export async function updateTask(
         : input.botId,
   });
 
+  const assigneeChanging = input.assigneeType !== undefined || input.botId !== undefined;
+  if (assigneeChanging && nextAssignee.assignee_type === "bot" && nextAssignee.bot_id) {
+    await assertAssigneeBotInProject(nextAssignee.bot_id, previous.project_id);
+  }
+
   if (nextStatus === "doing" && previous.status !== "doing") {
     const blockers = await assertCanEnterDoing(taskId, input.overrideStart);
     if (input.overrideStart && blockers.length > 0) {
       await recordTaskEvents([
         {
           taskId,
+          actor: input.actor,
           action: "override_start",
           fromValue: previous.status,
           toValue: "doing",
@@ -882,9 +904,21 @@ export async function updateTask(
   }
 
   const [task] = await attachDependenciesOnly([data as TaskRow]);
-  await recordTaskEvents(collectUpdateEvents(asTask(previous), asTask(task)));
+  await recordTaskEvents(collectUpdateEvents(asTask(previous), asTask(task), input.actor));
   const webhookError = await maybeFireWebhook(task, previous);
   return { task, webhookError };
+}
+
+function botPatchHasFieldUpdates(input: BotTaskPatch): boolean {
+  return (
+    input.title !== undefined ||
+    input.description !== undefined ||
+    input.priority !== undefined ||
+    input.dueAt !== undefined ||
+    input.status !== undefined ||
+    input.assigneeType !== undefined ||
+    input.botId !== undefined
+  );
 }
 
 export async function updateBotProjectTask(
@@ -892,91 +926,37 @@ export async function updateBotProjectTask(
   input: BotTaskPatch,
   actor: string
 ): Promise<TaskWithRelations> {
-  const supabase = createAdminClient();
-  const { data: existing, error: existingError } = await supabase
-    .from("tasks")
-    .select(TASK_SELECT)
-    .eq("id", taskId)
-    .single();
+  let task: TaskWithRelations | null = null;
 
-  if (existingError) {
-    throw existingError;
-  }
-
-  const previous = existing as TaskRow;
-  const patch: Record<string, unknown> = {};
-
-  if (input.title !== undefined) {
-    patch.title = input.title.trim();
-  }
-  if (input.description !== undefined) {
-    patch.description = input.description?.trim() || null;
-  }
-  if (input.priority !== undefined) {
-    patch.priority = input.priority;
-  }
-  if (input.dueAt !== undefined) {
-    patch.due_at = input.dueAt;
-  }
-
-  const { data, error } = await supabase
-    .from("tasks")
-    .update(patch)
-    .eq("id", taskId)
-    .select(TASK_SELECT)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  const [task] = await attachDependenciesOnly([data as TaskRow]);
-  const next = asTask(task);
-  const prev = asTask(previous);
-  const events: EventInput[] = [];
-
-  if (input.title !== undefined && prev.title !== next.title) {
-    events.push({
-      taskId,
+  if (botPatchHasFieldUpdates(input)) {
+    const result = await updateTask(taskId, {
+      title: input.title,
+      description: input.description,
+      priority: input.priority,
+      dueAt: input.dueAt,
+      status: input.status,
+      assigneeType: input.assigneeType,
+      botId: input.botId,
       actor,
-      action: "update",
-      fromValue: prev.title,
-      toValue: next.title,
-      meta: { field: "title" },
     });
-  }
-  if (input.description !== undefined && (prev.description ?? "") !== (next.description ?? "")) {
-    events.push({
-      taskId,
-      actor,
-      action: "update",
-      fromValue: prev.description,
-      toValue: next.description,
-      meta: { field: "description" },
-    });
-  }
-  if (input.priority !== undefined && prev.priority !== next.priority) {
-    events.push({
-      taskId,
-      actor,
-      action: "update",
-      fromValue: prev.priority,
-      toValue: next.priority,
-      meta: { field: "priority" },
-    });
-  }
-  if (input.dueAt !== undefined && (prev.due_at ?? null) !== (next.due_at ?? null)) {
-    events.push({
-      taskId,
-      actor,
-      action: "update",
-      fromValue: prev.due_at,
-      toValue: next.due_at,
-      meta: { field: "due_at" },
-    });
+    task = {
+      ...result.task,
+      webhook_error: result.webhookError ?? result.task.webhook_error,
+    };
   }
 
-  await recordTaskEvents(events);
+  if (input.archivedAt !== undefined) {
+    task = input.archivedAt === null ? await unarchiveTask(taskId, actor) : await archiveTask(taskId, actor);
+  }
+
+  if (!task) {
+    const existing = await getTask(taskId);
+    if (!existing) {
+      throw new Error("Task not found");
+    }
+    return existing;
+  }
+
   return task;
 }
 
@@ -1046,7 +1026,7 @@ export async function moveTask(
   return updateTask(taskId, { status, overrideStart: options?.overrideStart });
 }
 
-export async function archiveTask(taskId: string): Promise<TaskWithRelations> {
+export async function archiveTask(taskId: string, actor?: string): Promise<TaskWithRelations> {
   const supabase = createAdminClient();
   const now = new Date().toISOString();
   const { data: previous, error: previousError } = await supabase
@@ -1074,6 +1054,7 @@ export async function archiveTask(taskId: string): Promise<TaskWithRelations> {
   await recordTaskEvents([
     {
       taskId,
+      actor,
       action: "archive",
       fromValue: (previous as TaskRow).archived_at,
       toValue: now,
@@ -1082,7 +1063,7 @@ export async function archiveTask(taskId: string): Promise<TaskWithRelations> {
   return task;
 }
 
-export async function unarchiveTask(taskId: string): Promise<TaskWithRelations> {
+export async function unarchiveTask(taskId: string, actor?: string): Promise<TaskWithRelations> {
   const supabase = createAdminClient();
   const { data: previous, error: previousError } = await supabase
     .from("tasks")
@@ -1109,6 +1090,7 @@ export async function unarchiveTask(taskId: string): Promise<TaskWithRelations> 
   await recordTaskEvents([
     {
       taskId,
+      actor,
       action: "archive",
       fromValue: (previous as TaskRow).archived_at,
       toValue: null,
