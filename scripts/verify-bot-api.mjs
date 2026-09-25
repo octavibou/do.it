@@ -150,7 +150,7 @@ await withToken(undefined, () => {
   assert.equal(verifyBotBearer(`Bearer ${TOKEN}`), false);
 });
 
-await withToken(TOKEN, () => {
+await withToken(TOKEN, async () => {
   assert.equal(verifyBotApiToken(TOKEN), true);
   assert.equal(verifyBotApiToken(OTHER), false);
   assert.equal(verifyBotBearer(`Bearer ${TOKEN}`), true);

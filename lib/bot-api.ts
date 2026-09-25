@@ -1,4 +1,3 @@
-import { AssigneeBotError, DependencyBlockError } from "./errors";
 import type { AssigneeType, Bot, BotTaskCreate, BotTaskPatch, Priority, Project, TaskStatus, TaskSummary } from "./types";
 
 const TASK_STATUS_VALUES: readonly TaskStatus[] = ["inbox", "doing", "review", "done"];
@@ -585,16 +584,18 @@ export async function handlePatchBotTask(input: {
       },
     };
   } catch (error) {
-    if (error instanceof DependencyBlockError) {
+    if (error instanceof Error && error.name === "DependencyBlockError") {
+      const blockers =
+        "blockers" in error && Array.isArray(error.blockers) ? error.blockers : [];
       return {
         status: 409,
         body: {
           error: error.message,
-          blockers: error.blockers,
+          blockers,
         },
       };
     }
-    if (error instanceof AssigneeBotError) {
+    if (error instanceof Error && error.name === "AssigneeBotError") {
       return jsonError(403, error.message);
     }
     throw error;
