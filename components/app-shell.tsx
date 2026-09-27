@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { logoutAction } from "@/app/actions/auth";
 import { AppNav } from "@/components/app-nav";
+import { BrandLockup } from "@/components/brand-mark";
 import { ShellFrame } from "@/components/shell-frame";
 import { Button } from "@/components/ui/button";
 
@@ -10,8 +11,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-full flex-col">
       <header className="sticky top-0 z-30 border-b bg-background/90 backdrop-blur">
         <ShellFrame className="items-center gap-3 py-3">
-          <Link href="/" className="shrink-0 font-medium tracking-tight">
-            do.it
+          <Link href="/" className="shrink-0" aria-label="do.it">
+            <BrandLockup priority />
           </Link>
           <AppNav />
           <form action={logoutAction}>
