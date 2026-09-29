@@ -7,18 +7,16 @@ import {
   verifyBotBearer,
   verifySessionToken,
 } from "@/lib/auth-token";
-
-const PUBLIC_PATHS = new Set(["/login"]);
+import { isLoginPath, isPublicPath } from "@/lib/public-paths";
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const isPublic = PUBLIC_PATHS.has(pathname);
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const authenticated = verifySessionToken(token);
   const botAuthorized = isBotApiPath(pathname) && verifyBotBearer(request.headers.get("authorization"));
 
-  if (isPublic) {
-    if (authenticated && pathname === "/login") {
+  if (isPublicPath(pathname)) {
+    if (authenticated && isLoginPath(pathname)) {
       return NextResponse.redirect(new URL("/", request.url));
     }
     return NextResponse.next();
@@ -41,6 +39,6 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|webmanifest)$).*)",
   ],
 };
