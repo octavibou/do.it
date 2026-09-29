@@ -14,6 +14,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { STATUS_LABELS } from "@/lib/labels";
+import {
+  taskDialogListLabelClassName,
+  taskDialogListRowClassName,
+  taskDialogSelectTriggerClassName,
+} from "@/lib/task-dialog-ui";
 import type { TaskWithRelations } from "@/lib/types";
 
 export function TaskDependencies({
@@ -73,21 +78,21 @@ export function TaskDependencies({
   }
 
   return (
-    <section className="grid gap-3">
+    <section className="grid min-w-0 gap-3">
       <h3 className="text-sm font-medium">Dependencias</h3>
-      <p className="text-xs text-muted-foreground">
+      <p className="min-w-0 text-xs text-muted-foreground wrap-anywhere">
         Un bloqueador tiene que estar en Hecho para pasar esta tarea a En curso, salvo override de
         Octavi.
       </p>
-      <div className="grid gap-2">
+      <div className="grid min-w-0 gap-2">
         <p className="text-xs font-medium">La bloquean</p>
         {task.blocked_by.length === 0 ? (
           <p className="text-xs text-muted-foreground">Nadie la bloquea.</p>
         ) : (
-          <ul className="grid gap-1.5">
+          <ul className="grid min-w-0 gap-1.5">
             {task.blocked_by.map((item) => (
-              <li key={item.id} className="flex items-center justify-between gap-2 text-xs">
-                <span>
+              <li key={item.id} className={taskDialogListRowClassName("text-xs")}>
+                <span className={taskDialogListLabelClassName()}>
                   {item.title}{" "}
                   <span className="text-muted-foreground">({STATUS_LABELS[item.status]})</span>
                 </span>
@@ -104,16 +109,16 @@ export function TaskDependencies({
             ))}
           </ul>
         )}
-        <div className="flex items-end gap-2">
+        <div className="flex min-w-0 items-end gap-2">
           <div className="grid min-w-0 flex-1 gap-1.5">
             <Label className="text-xs">Añadir bloqueador</Label>
             <Select value={blockerId} onValueChange={setBlockerId}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger className={taskDialogSelectTriggerClassName()}>
                 <SelectValue placeholder="Tarea que debe terminar antes" />
               </SelectTrigger>
               <SelectContent>
                 {options.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
+                  <SelectItem key={item.id} value={item.id} className="whitespace-normal wrap-anywhere">
                     {item.title}
                   </SelectItem>
                 ))}
@@ -125,15 +130,15 @@ export function TaskDependencies({
           </Button>
         </div>
       </div>
-      <div className="grid gap-2">
+      <div className="grid min-w-0 gap-2">
         <p className="text-xs font-medium">Ella bloquea</p>
         {task.blocks.length === 0 ? (
           <p className="text-xs text-muted-foreground">No bloquea a nadie.</p>
         ) : (
-          <ul className="grid gap-1.5">
+          <ul className="grid min-w-0 gap-1.5">
             {task.blocks.map((item) => (
-              <li key={item.id} className="flex items-center justify-between gap-2 text-xs">
-                <span>
+              <li key={item.id} className={taskDialogListRowClassName("text-xs")}>
+                <span className={taskDialogListLabelClassName()}>
                   {item.title}{" "}
                   <span className="text-muted-foreground">({STATUS_LABELS[item.status]})</span>
                 </span>
@@ -150,16 +155,16 @@ export function TaskDependencies({
             ))}
           </ul>
         )}
-        <div className="flex items-end gap-2">
+        <div className="flex min-w-0 items-end gap-2">
           <div className="grid min-w-0 flex-1 gap-1.5">
             <Label className="text-xs">Añadir tarea bloqueada</Label>
             <Select value={blockedId} onValueChange={setBlockedId}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger className={taskDialogSelectTriggerClassName()}>
                 <SelectValue placeholder="Tarea que espera a esta" />
               </SelectTrigger>
               <SelectContent>
                 {options.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
+                  <SelectItem key={item.id} value={item.id} className="whitespace-normal wrap-anywhere">
                     {item.title}
                   </SelectItem>
                 ))}

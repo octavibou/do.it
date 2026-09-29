@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { isDoneColumn, kanbanBoardColumnsClassName, kanbanColumnClassName } from "@/lib/kanban-ui";
+import { taskDialogContentClassName, taskDialogHeaderClassName } from "@/lib/task-dialog-ui";
 import { INBOX_GATE_COPY, STATUS_LABELS, STATUS_ORDER, TASK_SORT_LABELS } from "@/lib/labels";
 import { isDueThisWeek, isOverdue, sortTasks, TASK_SORT_MODES, type TaskSortMode } from "@/lib/task-rules";
 import { cn } from "@/lib/utils";
@@ -258,8 +259,8 @@ export function KanbanBoard({
                 Nueva tarea
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-              <DialogHeader>
+            <DialogContent className={taskDialogContentClassName()}>
+              <DialogHeader className={taskDialogHeaderClassName()}>
                 <DialogTitle>Nueva tarea</DialogTitle>
                 <DialogDescription>
                   Entra en Bandeja. El webhook solo se dispara al pasar a En curso con un bot.
@@ -327,8 +328,8 @@ export function KanbanBoard({
         </DndContext>
       )}
       <Dialog open={Boolean(editTask)} onOpenChange={(open) => !open && setEditTaskId(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
+        <DialogContent className={taskDialogContentClassName()}>
+          <DialogHeader className={taskDialogHeaderClassName()}>
             <DialogTitle>Editar tarea</DialogTitle>
             <DialogDescription>
               Prioridad, fecha, dependencias y actividad. {INBOX_GATE_COPY}

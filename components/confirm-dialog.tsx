@@ -31,10 +31,10 @@ export function ConfirmDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
+      <DialogContent className="min-w-0 max-w-[calc(100vw-2rem)] sm:max-w-md">
+        <DialogHeader className="min-w-0 wrap-anywhere">
+          <DialogTitle className="wrap-anywhere">{title}</DialogTitle>
+          <DialogDescription className="wrap-anywhere">{description}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
