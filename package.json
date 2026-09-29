@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "generate:brand": "node scripts/generate-brand-assets.mjs",
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/verify-webhooks.mjs && node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/verify-v2.mjs && node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/verify-bot-api.mjs"
   },
   "dependencies": {
@@ -33,6 +34,8 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
