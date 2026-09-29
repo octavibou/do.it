@@ -32,7 +32,19 @@ export type Bot = {
   name: string;
   project_id: string;
   webhook_url: string | null;
+  webhook_header_name?: string | null;
+  webhook_secret_last4?: string | null;
+  last_webhook_at?: string | null;
+  last_webhook_event?: string | null;
+  last_webhook_task_id?: string | null;
+  last_webhook_status?: number | null;
+  last_webhook_error?: string | null;
   created_at: string;
+};
+
+export type BotWebhookAuth = {
+  secret: string | null;
+  headerName: string;
 };
 
 export type Task = {
@@ -105,7 +117,7 @@ export type ProjectWithBot = Project & {
 export type DuplicateCandidate = TaskSummary;
 
 export type ActionResult =
-  | { ok: true; webhookError?: string | null; bodyWarning?: string }
+  | { ok: true; webhookError?: string | null; bodyWarning?: string; httpStatus?: number | null }
   | {
       ok: false;
       error: string;

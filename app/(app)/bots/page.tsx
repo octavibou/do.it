@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 
 import { AssigneeBadge } from "@/components/assignee-badge";
+import { BotWebhookPanel } from "@/components/bot-webhook-panel";
 import { CardsSkeleton } from "@/components/board-skeleton";
 import { ConfigNotice } from "@/components/config-notice";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -57,7 +58,8 @@ export default function BotsPage() {
         <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Trabajo</p>
         <h1 className="text-2xl font-medium tracking-tight">Qué hace cada bot</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Tareas en curso asignadas a un bot. API: <code>GET /api/bots/:id/current</code>
+          Tareas en curso asignadas a un bot. El webhook <code>task.assigned</code> se dispara
+          al asignar el bot, en cualquier columna. API: <code>GET /api/bots/:id/current</code>
         </p>
       </div>
       <Suspense fallback={<CardsSkeleton />}>
@@ -109,6 +111,7 @@ function BotsWorkView({
                 Abrir tablero
               </Link>
             </div>
+            <BotWebhookPanel bot={bot} />
             {tasks.length === 0 ? (
               <p className="mt-4 text-sm text-muted-foreground">Nada en curso.</p>
             ) : (

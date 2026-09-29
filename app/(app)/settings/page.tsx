@@ -51,9 +51,11 @@ export default function SettingsPage() {
         <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Bots</p>
         <h1 className="text-2xl font-medium tracking-tight">Webhooks</h1>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Cuando una tarea pasa a <strong>En curso</strong> y el asignado es un bot, do.it
-          hace POST JSON a esta URL. Si falla, la tarea se queda en En curso y verás el
-          error en la tarjeta.
+          Cuando una tarea se <strong>asigna a un bot</strong> (en cualquier columna,
+          incluida Bandeja), do.it hace POST JSON <code>task.assigned</code> a esta URL
+          con el secreto configurado. El bot mueve la tarea a En curso por la Bot API.
+          Si el POST falla, la asignación se guarda igual y verás el error en la tarjeta
+          y en /bots.
         </p>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Las llamadas de bots a la API usan el secreto <code>BOT_API_TOKEN</code> en

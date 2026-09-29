@@ -43,7 +43,10 @@ const flow = {
   id: "7d765d6a-63aa-4d4d-9914-0b3d26dee739",
   name: "Flow",
   project_id: "proj-leadflow",
-  webhook_url: null,
+  webhook_url: "https://example.test/flow",
+  webhook_secret: "flow-sender-key",
+  webhook_header_name: "Authorization",
+  webhook_secret_last4: "r-key",
   created_at: "2026-01-01T00:00:00.000Z",
   project: {
     id: "proj-leadflow",
@@ -560,6 +563,11 @@ await withToken(TOKEN, async () => {
   assert.equal(listed.status, 200);
   assert.equal(listed.body.bot.name, "Flow");
   assert.equal(listed.body.tasks.length, 1);
+  assert.ok(!("webhook_secret" in listed.body.bot), "bot api must not expose webhook_secret");
+  assert.ok(!("webhook_url" in listed.body.bot), "bot api must not expose webhook_url");
+  assert.ok(!("webhook_secret_last4" in listed.body.bot));
+  assert.ok(!("webhook_header_name" in listed.body.bot));
+  assert.deepEqual(Object.keys(listed.body.bot).sort(), ["id", "name", "project", "project_id"]);
 
   const createUnauthorized = await handlePostBotTask({
     botId: flow.id,

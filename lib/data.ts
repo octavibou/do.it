@@ -19,6 +19,7 @@ import type {
   Bot,
   BotTaskCreate,
   BotTaskPatch,
+  BotWebhookAuth,
   Priority,
   Project,
   ProjectWithBot,
@@ -29,14 +30,25 @@ import type {
   TaskSummary,
   TaskWithRelations,
 } from "@/lib/types";
-import { dispatchDoingWebhook, shouldDispatchDoingWebhook } from "@/lib/webhooks";
+import {
+  DEFAULT_WEBHOOK_HEADER,
+  WEBHOOK_DELIVERY_KEEP,
+  dispatchBotWebhook,
+  last4OfSecret,
+  normalizeWebhookHeaderName,
+  shouldDispatchAssignedWebhook,
+  type WebhookDispatchResult,
+} from "@/lib/webhooks";
 
-const TASK_SELECT = "*, bot:bots(*), project:projects(*)";
+const BOT_PUBLIC_COLUMNS = "id, name, project_id, webhook_url, created_at";
+const BOT_SETTINGS_COLUMNS = `${BOT_PUBLIC_COLUMNS}, webhook_header_name, webhook_secret_last4, last_webhook_at, last_webhook_event, last_webhook_task_id, last_webhook_status, last_webhook_error`;
+const TASK_SELECT = `*, bot:bots(${BOT_PUBLIC_COLUMNS}), project:projects(*)`;
 const BOARD_TASK_SELECT =
-  "id, project_id, title, description, status, assignee_type, bot_id, priority, due_at, archived_at, created_at, updated_at, started_at, webhook_error, webhook_fired_at, bot:bots(id, name, project_id, webhook_url, created_at)";
+  `id, project_id, title, description, status, assignee_type, bot_id, priority, due_at, archived_at, created_at, updated_at, started_at, webhook_error, webhook_fired_at, bot:bots(${BOT_PUBLIC_COLUMNS})`;
 const PROJECT_SELECT = "id, slug, name, created_at";
 const ACTOR_OCTAVI = "octavi";
 const ACTOR_SYSTEM = "system";
+const MIGRATION_005 = "supabase/migrations/005_bot_webhook_auth.sql";
 
 type TaskRow = Task & {
   bot: Bot | null;
@@ -81,8 +93,41 @@ function asSummary(task: Pick<Task, "id" | "title" | "status" | "archived_at">):
   };
 }
 
+function isMissingSchemaError(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) {
+    return false;
+  }
+  const code = error.code ?? "";
+  const message = error.message ?? "";
+  return (
+    code === "42703" ||
+    code === "42P01" ||
+    code === "PGRST204" ||
+    code === "PGRST205" ||
+    /does not exist|schema cache|could not find/i.test(message)
+  );
+}
+
+function publicBot<T extends Bot>(bot: T | null): T | null {
+  if (!bot) {
+    return null;
+  }
+  if (!("webhook_secret" in bot)) {
+    return bot;
+  }
+  const { webhook_secret: _secret, ...safe } = bot as T & { webhook_secret?: unknown };
+  return safe as T;
+}
+
 function withEmptyDeps(row: TaskRow): TaskWithRelations {
-  return { ...row, due_at: row.due_at ?? null, archived_at: row.archived_at ?? null, blocked_by: [], blocks: [] };
+  return {
+    ...row,
+    due_at: row.due_at ?? null,
+    archived_at: row.archived_at ?? null,
+    bot: publicBot(row.bot),
+    blocked_by: [],
+    blocks: [],
+  };
 }
 
 async function recordTaskEvents(events: EventInput[]): Promise<void> {
@@ -203,7 +248,7 @@ export const listProjects = cache(async (): Promise<ProjectWithBot[]> => {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("projects")
-    .select(`${PROJECT_SELECT}, bots(id, name, project_id, webhook_url, created_at)`)
+    .select(`${PROJECT_SELECT}, bots(${BOT_PUBLIC_COLUMNS})`)
     .order("name", { ascending: true });
 
   if (error) {
@@ -254,7 +299,7 @@ export const getProjectBySlug = cache(async (slug: string): Promise<ProjectWithB
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("projects")
-    .select(`${PROJECT_SELECT}, bots(id, name, project_id, webhook_url, created_at)`)
+    .select(`${PROJECT_SELECT}, bots(${BOT_PUBLIC_COLUMNS})`)
     .eq("slug", slug)
     .maybeSingle();
 
@@ -461,16 +506,26 @@ export async function getTask(taskId: string): Promise<TaskWithRelations | null>
 
 export const listBots = cache(async (): Promise<(Bot & { project: Project })[]> => {
   const supabase = createAdminClient();
-  const { data, error } = await supabase
+  const projectEmbed = "project:projects(id, slug, name, created_at)";
+  const full = await supabase
     .from("bots")
-    .select("id, name, project_id, webhook_url, created_at, project:projects(id, slug, name, created_at)")
+    .select(`${BOT_SETTINGS_COLUMNS}, ${projectEmbed}`)
     .order("name", { ascending: true });
 
-  if (error) {
-    throw error;
+  const result = full.error && isMissingSchemaError(full.error)
+    ? await supabase
+        .from("bots")
+        .select(`${BOT_PUBLIC_COLUMNS}, ${projectEmbed}`)
+        .order("name", { ascending: true })
+    : full;
+
+  if (result.error) {
+    throw result.error;
   }
 
-  return (data ?? []) as unknown as (Bot & { project: Project })[];
+  return ((result.data ?? []) as (Bot & { project: Project })[]).map(
+    (bot) => publicBot(bot) as Bot & { project: Project }
+  );
 });
 
 export type DoingBotWork = {
@@ -501,7 +556,7 @@ export async function getBot(id: string): Promise<(Bot & { project: Project }) |
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("bots")
-    .select("*, project:projects(*)")
+    .select(`${BOT_PUBLIC_COLUMNS}, project:projects(*)`)
     .eq("id", id)
     .maybeSingle();
 
@@ -509,7 +564,12 @@ export async function getBot(id: string): Promise<(Bot & { project: Project }) |
     throw error;
   }
 
-  return (data as (Bot & { project: Project }) | null) ?? null;
+  if (!data) {
+    return null;
+  }
+
+  const bot = data as Bot & { project: Project };
+  return { ...bot, ...publicBot(bot), project: bot.project };
 }
 
 function doingBotQuery() {
@@ -625,13 +685,121 @@ async function persistWebhookResult(
   return result.error;
 }
 
+async function persistBotDelivery(input: {
+  botId: string;
+  taskId: string | null;
+  result: WebhookDispatchResult;
+}) {
+  const supabase = createAdminClient();
+  const last = {
+    last_webhook_at: input.result.sentAt,
+    last_webhook_event: input.result.event,
+    last_webhook_task_id: input.taskId,
+    last_webhook_status: input.result.httpStatus,
+    last_webhook_error: input.result.ok ? null : input.result.error,
+  };
+
+  const botUpdate = await supabase.from("bots").update(last).eq("id", input.botId);
+  if (botUpdate.error && !isMissingSchemaError(botUpdate.error)) {
+    console.error("webhook last-delivery update failed", botUpdate.error);
+  }
+
+  const inserted = await supabase.from("webhook_deliveries").insert({
+    bot_id: input.botId,
+    task_id: input.taskId,
+    event: input.result.event,
+    event_id: input.result.eventId,
+    http_status: input.result.httpStatus,
+    error: input.result.ok ? null : input.result.error,
+    sent_at: input.result.sentAt,
+  });
+  if (inserted.error) {
+    if (!isMissingSchemaError(inserted.error)) {
+      console.error("webhook_deliveries insert failed", inserted.error);
+    }
+    return;
+  }
+
+  const listed = await supabase
+    .from("webhook_deliveries")
+    .select("id")
+    .eq("bot_id", input.botId)
+    .order("sent_at", { ascending: false });
+  if (listed.error || !listed.data) {
+    return;
+  }
+  const extra = listed.data.slice(WEBHOOK_DELIVERY_KEEP).map((row) => row.id);
+  if (extra.length > 0) {
+    await supabase.from("webhook_deliveries").delete().in("id", extra);
+  }
+}
+
+async function loadBotWebhookAuth(botId: string): Promise<BotWebhookAuth> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("bots")
+    .select("webhook_secret, webhook_header_name")
+    .eq("id", botId)
+    .maybeSingle();
+
+  if (error) {
+    if (!isMissingSchemaError(error)) {
+      console.error("webhook auth load failed", error);
+    }
+    return { secret: null, headerName: DEFAULT_WEBHOOK_HEADER };
+  }
+
+  return {
+    secret: typeof data?.webhook_secret === "string" ? data.webhook_secret : null,
+    headerName:
+      typeof data?.webhook_header_name === "string" && data.webhook_header_name.trim()
+        ? data.webhook_header_name
+        : DEFAULT_WEBHOOK_HEADER,
+  };
+}
+
+async function dispatchAndRecord(input: {
+  event: "task.assigned" | "webhook.test";
+  task: TaskWithRelations | null;
+  project: Project;
+  bot: Bot;
+  previous: Task | null;
+  persistOnTask?: boolean;
+}) {
+  const auth = await loadBotWebhookAuth(input.bot.id);
+  const result = await dispatchBotWebhook({
+    event: input.event,
+    task: input.task ? asTask(input.task) : null,
+    project: input.project,
+    bot: input.bot,
+    previousAssignee: {
+      assignee_type: input.previous?.assignee_type ?? null,
+      bot_id: input.previous?.bot_id ?? null,
+    },
+    secret: auth.secret,
+    headerName: auth.headerName,
+  });
+
+  await persistBotDelivery({
+    botId: input.bot.id,
+    taskId: input.task?.id ?? null,
+    result,
+  });
+
+  if (input.persistOnTask && input.task) {
+    return persistWebhookResult(input.task.id, result);
+  }
+
+  return result.ok ? null : result.error;
+}
+
 async function maybeFireWebhook(task: TaskWithRelations, previous: Task | null) {
   if (
-    !shouldDispatchDoingWebhook({
-      nextStatus: task.status,
+    !shouldDispatchAssignedWebhook({
       assigneeType: task.assignee_type,
-      previousStatus: previous?.status ?? null,
+      botId: task.bot_id,
       previousAssigneeType: previous?.assignee_type ?? null,
+      previousBotId: previous?.bot_id ?? null,
     })
   ) {
     return null;
@@ -643,13 +811,14 @@ async function maybeFireWebhook(task: TaskWithRelations, previous: Task | null) 
     return error;
   }
 
-  const result = await dispatchDoingWebhook({
-    task: asTask(task),
+  return dispatchAndRecord({
+    event: "task.assigned",
+    task,
     project: task.project,
     bot: task.bot,
+    previous,
+    persistOnTask: true,
   });
-
-  return persistWebhookResult(task.id, result);
 }
 
 async function loadBlockers(taskId: string): Promise<TaskSummary[]> {
@@ -888,7 +1057,7 @@ export async function updateTask(
   if (nextStatus === "doing" && previous.status !== "doing") {
     patch.started_at = new Date().toISOString();
   }
-  if (nextStatus !== "doing") {
+  if (nextAssignee.assignee_type !== "bot") {
     patch.webhook_error = null;
   }
 
@@ -977,7 +1146,7 @@ export async function createBotProjectTask(
     botId: input.botId,
   });
 
-  // Always inbox. Bot API create must not dispatch doing webhooks.
+  // Always inbox. If the assignee is a bot, fire task.assigned (same as UI create).
   const { data, error } = await supabase
     .from("tasks")
     .insert({
@@ -1015,7 +1184,11 @@ export async function createBotProjectTask(
     },
   ]);
 
-  return task;
+  const webhookError = await maybeFireWebhook(task, null);
+  return {
+    ...task,
+    webhook_error: webhookError ?? task.webhook_error,
+  };
 }
 
 export async function moveTask(
@@ -1215,9 +1388,17 @@ export async function removeTaskDependency(blockerTaskId: string, blockedTaskId:
   ]);
 }
 
-export async function updateBotWebhook(botId: string, webhookUrl: string | null): Promise<Bot> {
+export async function updateBotWebhook(
+  botId: string,
+  input: {
+    webhookUrl: string | null;
+    webhookSecret?: string;
+    clearSecret?: boolean;
+    webhookHeaderName?: string;
+  }
+): Promise<Bot> {
   const supabase = createAdminClient();
-  const cleaned = webhookUrl?.trim() || null;
+  const cleaned = input.webhookUrl?.trim() || null;
   if (cleaned) {
     try {
       const parsed = new URL(cleaned);
@@ -1229,18 +1410,48 @@ export async function updateBotWebhook(botId: string, webhookUrl: string | null)
     }
   }
 
-  const { data, error } = await supabase
-    .from("bots")
-    .update({ webhook_url: cleaned })
-    .eq("id", botId)
-    .select("*")
-    .single();
-
-  if (error) {
-    throw error;
+  const patch: Record<string, unknown> = { webhook_url: cleaned };
+  const wantsSecretWrite = Boolean(input.clearSecret || input.webhookSecret?.trim());
+  if (input.webhookHeaderName !== undefined) {
+    patch.webhook_header_name = normalizeWebhookHeaderName(input.webhookHeaderName);
+  }
+  if (input.clearSecret) {
+    patch.webhook_secret = null;
+    patch.webhook_secret_last4 = null;
+  } else if (input.webhookSecret?.trim()) {
+    const secret = input.webhookSecret.trim();
+    patch.webhook_secret = secret;
+    patch.webhook_secret_last4 = last4OfSecret(secret);
   }
 
-  return data as Bot;
+  const full = await supabase
+    .from("bots")
+    .update(patch)
+    .eq("id", botId)
+    .select(BOT_SETTINGS_COLUMNS)
+    .single();
+
+  if (full.error && isMissingSchemaError(full.error)) {
+    if (wantsSecretWrite) {
+      throw new Error(`Aplica ${MIGRATION_005} para guardar el secreto del webhook.`);
+    }
+    const fallback = await supabase
+      .from("bots")
+      .update({ webhook_url: cleaned })
+      .eq("id", botId)
+      .select(BOT_PUBLIC_COLUMNS)
+      .single();
+    if (fallback.error) {
+      throw fallback.error;
+    }
+    return publicBot(fallback.data as Bot) as Bot;
+  }
+
+  if (full.error) {
+    throw full.error;
+  }
+
+  return publicBot(full.data as Bot) as Bot;
 }
 
 export async function retryTaskWebhook(
@@ -1254,7 +1465,7 @@ export async function retryTaskWebhook(
   }
 
   const [task] = await attachDependenciesOnly([data as TaskRow]);
-  if (task.status !== "doing" || task.assignee_type !== "bot") {
+  if (task.assignee_type !== "bot") {
     return { task, webhookError: task.webhook_error };
   }
 
@@ -1266,12 +1477,14 @@ export async function retryTaskWebhook(
     return { task, webhookError };
   }
 
-  const result = await dispatchDoingWebhook({
-    task: asTask(task),
+  const webhookError = await dispatchAndRecord({
+    event: "task.assigned",
+    task,
     project: task.project,
     bot: task.bot,
+    previous: asTask(task),
+    persistOnTask: true,
   });
-  const webhookError = await persistWebhookResult(task.id, result);
 
   const { data: refreshed } = await supabase.from("tasks").select(TASK_SELECT).eq("id", taskId).single();
   const [next] = refreshed ? await attachDependenciesOnly([refreshed as TaskRow]) : [task];
@@ -1280,4 +1493,31 @@ export async function retryTaskWebhook(
     task: next,
     webhookError,
   };
+}
+
+export async function testBotWebhook(botId: string): Promise<WebhookDispatchResult> {
+  const bot = await getBot(botId);
+  if (!bot) {
+    return {
+      ok: false,
+      event: "webhook.test",
+      eventId: crypto.randomUUID(),
+      sentAt: new Date().toISOString(),
+      httpStatus: null,
+      error: "Bot no encontrado.",
+    };
+  }
+
+  const auth = await loadBotWebhookAuth(botId);
+  const result = await dispatchBotWebhook({
+    event: "webhook.test",
+    task: null,
+    project: bot.project,
+    bot,
+    previousAssignee: null,
+    secret: auth.secret,
+    headerName: auth.headerName,
+  });
+  await persistBotDelivery({ botId, taskId: null, result });
+  return result;
 }
