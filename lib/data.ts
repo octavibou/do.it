@@ -115,8 +115,9 @@ function publicBot<T extends Bot>(bot: T | null): T | null {
   if (!("webhook_secret" in bot)) {
     return bot;
   }
-  const { webhook_secret: _secret, ...safe } = bot as T & { webhook_secret?: unknown };
-  return safe as T;
+  const safe = { ...bot } as T & { webhook_secret?: unknown };
+  delete safe.webhook_secret;
+  return safe;
 }
 
 function withEmptyDeps(row: TaskRow): TaskWithRelations {
@@ -523,7 +524,7 @@ export const listBots = cache(async (): Promise<(Bot & { project: Project })[]> 
     throw result.error;
   }
 
-  return ((result.data ?? []) as (Bot & { project: Project })[]).map(
+  return ((result.data ?? []) as unknown as (Bot & { project: Project })[]).map(
     (bot) => publicBot(bot) as Bot & { project: Project }
   );
 });
@@ -568,7 +569,7 @@ export async function getBot(id: string): Promise<(Bot & { project: Project }) |
     return null;
   }
 
-  const bot = data as Bot & { project: Project };
+  const bot = data as unknown as Bot & { project: Project };
   return { ...bot, ...publicBot(bot), project: bot.project };
 }
 
