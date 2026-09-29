@@ -24,6 +24,15 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ASSIGNEE_LABELS, INBOX_GATE_COPY, PRIORITY_LABELS, PRIORITY_ORDER, STATUS_LABELS } from "@/lib/labels";
+import {
+  taskDescriptionClassName,
+  taskDialogListLabelClassName,
+  taskDialogListRowClassName,
+  taskDialogSelectTriggerClassName,
+  taskFormClassName,
+  taskFormFieldClassName,
+  taskFormPairClassName,
+} from "@/lib/task-dialog-ui";
 import { BODY_PLACEHOLDER, fromDatetimeLocalValue, isShortBody, toDatetimeLocalValue } from "@/lib/task-rules";
 import type { ActionResult, Bot, DuplicateCandidate, Priority, TaskStatus, TaskWithRelations } from "@/lib/types";
 
@@ -147,8 +156,8 @@ export function TaskForm({
 
   return (
     <>
-      <form action={onSubmit} className="grid gap-4">
-        <div className="grid gap-2">
+      <form action={onSubmit} className={taskFormClassName()}>
+        <div className={taskFormFieldClassName()}>
           <Label htmlFor="title">Título</Label>
           <Input
             id="title"
@@ -158,7 +167,7 @@ export function TaskForm({
             placeholder="Nombre corto y accionable"
           />
         </div>
-        <div className="grid gap-2">
+        <div className={taskFormFieldClassName()}>
           <Label htmlFor="description">Cuerpo</Label>
           <Textarea
             id="description"
@@ -167,19 +176,19 @@ export function TaskForm({
             onChange={(event) => setDescription(event.target.value)}
             placeholder={BODY_PLACEHOLDER}
             rows={10}
-            className="min-h-48 font-mono text-sm"
+            className={taskDescriptionClassName()}
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="min-w-0 text-xs text-muted-foreground wrap-anywhere">
             Markdown bienvenido. Estructura: por qué / objetivo DoD / pasos / deps / enlaces.
             {isShortBody(description) ? " Cuerpo corto: no bloquea, pero conviene completarlo." : null}
           </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className={taskFormPairClassName()}>
           {task ? (
-            <div className="grid gap-2">
+            <div className={taskFormFieldClassName()}>
               <Label>Estado</Label>
               <Select value={status} onValueChange={(value) => setStatus(value as TaskStatus)}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger className={taskDialogSelectTriggerClassName()}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -192,19 +201,19 @@ export function TaskForm({
               </Select>
             </div>
           ) : (
-            <div className="grid gap-2">
+            <div className={taskFormFieldClassName()}>
               <Label>Estado</Label>
-              <p className="rounded-lg bg-muted/60 px-3 py-2 text-sm">Bandeja (por defecto)</p>
-              <p className="text-xs text-muted-foreground">{INBOX_GATE_COPY}</p>
+              <p className="min-w-0 rounded-lg bg-muted/60 px-3 py-2 text-sm wrap-anywhere">Bandeja (por defecto)</p>
+              <p className="min-w-0 text-xs text-muted-foreground wrap-anywhere">{INBOX_GATE_COPY}</p>
             </div>
           )}
-          <div className="grid gap-2">
+          <div className={taskFormFieldClassName()}>
             <Label>Prioridad</Label>
             <Select
               value={priority || "none"}
               onValueChange={(value) => setPriority(value === "none" ? "" : (value as Priority))}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className={taskDialogSelectTriggerClassName()}>
                 <SelectValue placeholder="Sin prioridad" />
               </SelectTrigger>
               <SelectContent>
@@ -218,24 +227,25 @@ export function TaskForm({
             </Select>
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-2">
+        <div className={taskFormPairClassName()}>
+          <div className={taskFormFieldClassName()}>
             <Label htmlFor="dueLocal">Fecha límite</Label>
             <Input
               id="dueLocal"
               name="dueLocal"
               type="datetime-local"
               defaultValue={toDatetimeLocalValue(task?.due_at)}
+              className="min-w-0 max-w-full"
             />
-            <p className="text-xs text-muted-foreground">No mueve el estado sola.</p>
+            <p className="min-w-0 text-xs text-muted-foreground wrap-anywhere">No mueve el estado sola.</p>
           </div>
-          <div className="grid gap-2">
+          <div className={taskFormFieldClassName()}>
             <Label>Asignado</Label>
             <Select
               value={assigneeType}
               onValueChange={(value) => setAssigneeType(value as "human" | "bot")}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className={taskDialogSelectTriggerClassName()}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -249,15 +259,15 @@ export function TaskForm({
           </div>
         </div>
         {assigneeType === "bot" ? (
-          <div className="grid gap-2">
+          <div className={taskFormFieldClassName()}>
             <Label>Bot</Label>
             <Select value={botId} onValueChange={setBotId}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger className={taskDialogSelectTriggerClassName()}>
                 <SelectValue placeholder="Elige bot" />
               </SelectTrigger>
               <SelectContent>
                 {bots.map((bot) => (
-                  <SelectItem key={bot.id} value={bot.id}>
+                  <SelectItem key={bot.id} value={bot.id} className="whitespace-normal wrap-anywhere">
                     {bot.name}
                   </SelectItem>
                 ))}
@@ -266,12 +276,12 @@ export function TaskForm({
           </div>
         ) : null}
         {duplicates.length > 0 ? (
-          <div className="grid gap-2 rounded-xl bg-muted/60 p-3">
+          <div className="grid min-w-0 gap-2 rounded-xl bg-muted/60 p-3">
             <p className="text-sm font-medium">Hay tareas parecidas</p>
-            <ul className="grid gap-2">
+            <ul className="grid min-w-0 gap-2">
               {duplicates.map((item) => (
-                <li key={item.id} className="flex items-center justify-between gap-2 text-sm">
-                  <span>
+                <li key={item.id} className={taskDialogListRowClassName("text-sm")}>
+                  <span className={taskDialogListLabelClassName()}>
                     {item.title}{" "}
                     <span className="text-muted-foreground">({STATUS_LABELS[item.status]})</span>
                   </span>
@@ -297,11 +307,11 @@ export function TaskForm({
           </div>
         ) : null}
         {blockers.length > 0 ? (
-          <div className="grid gap-2 rounded-xl bg-muted/60 p-3">
+          <div className="grid min-w-0 gap-2 rounded-xl bg-muted/60 p-3">
             <p className="text-sm font-medium">Bloqueadores sin terminar</p>
-            <ul className="text-sm text-muted-foreground">
+            <ul className="min-w-0 text-sm text-muted-foreground">
               {blockers.map((item) => (
-                <li key={item.id}>
+                <li key={item.id} className={taskDialogListLabelClassName()}>
                   {item.title} ({STATUS_LABELS[item.status]})
                 </li>
               ))}
@@ -318,7 +328,7 @@ export function TaskForm({
         ) : null}
         {task ? <TaskDependencies task={task} tasks={tasks} slug={slug} /> : null}
         {task ? <TaskActivity taskId={task.id} /> : null}
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           {task ? (
             <Button formAction={onArchive} type="submit" variant="destructive" disabled={pending}>
               {task.archived_at ? "Restaurar" : "Archivar"}

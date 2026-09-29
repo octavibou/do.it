@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { findSimilarTitles, isStrongTitleMatch, normalizeTitle } from "../lib/duplicates.ts";
 import { chunkIds, joinDependencyMaps, uniqueDependencyEdges } from "../lib/task-deps.ts";
@@ -9,6 +10,15 @@ import {
   kanbanColumnClassName,
   taskCardClassName,
 } from "../lib/kanban-ui.ts";
+import {
+  taskActivityListClassName,
+  taskActivityValueClassName,
+  taskDescriptionClassName,
+  taskDialogContentClassName,
+  taskDialogListLabelClassName,
+  taskDialogSelectTriggerClassName,
+  taskFormClassName,
+} from "../lib/task-dialog-ui.ts";
 import { PRIORITY_LABELS } from "../lib/labels.ts";
 import {
   canEnterDoing,
@@ -157,5 +167,29 @@ assert.match(appShellContainerClassName("/"), /max-w-6xl/);
 assert.doesNotMatch(appShellContainerClassName("/"), /max-w-none/);
 assert.doesNotMatch(appShellContainerClassName("/bots"), /max-w-none/);
 assert.doesNotMatch(appShellContainerClassName("/settings"), /max-w-none/);
+
+const taskDialog = taskDialogContentClassName();
+assert.match(taskDialog, /overflow-x-hidden/);
+assert.match(taskDialog, /overflow-y-auto/);
+assert.match(taskDialog, /min-w-0/);
+assert.match(taskDialog, /100vw/);
+assert.match(taskDialog, /touch-pan-y/);
+assert.match(taskDialog, /sm:max-w-2xl/);
+assert.match(taskFormClassName(), /min-w-0/);
+assert.match(taskFormClassName(), /wrap-anywhere/);
+assert.match(taskDescriptionClassName(), /min-w-0/);
+assert.match(taskDescriptionClassName(), /max-w-full/);
+assert.match(taskDescriptionClassName(), /wrap-anywhere/);
+assert.match(taskDialogSelectTriggerClassName(), /min-w-0/);
+assert.match(taskDialogListLabelClassName(), /wrap-anywhere/);
+assert.match(taskActivityListClassName(), /overflow-x-hidden/);
+assert.match(taskActivityValueClassName(), /wrap-anywhere/);
+
+const kanbanBoardSource = await readFile(new URL("../components/kanban-board.tsx", import.meta.url), "utf8");
+assert.match(kanbanBoardSource, /taskDialogContentClassName/);
+assert.doesNotMatch(
+  kanbanBoardSource,
+  /DialogContent className="max-h-\[90vh\] overflow-y-auto/
+);
 
 console.log("v2 rules ok");
