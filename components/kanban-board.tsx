@@ -263,7 +263,7 @@ export function KanbanBoard({
               <DialogHeader className={taskDialogHeaderClassName()}>
                 <DialogTitle>Nueva tarea</DialogTitle>
                 <DialogDescription>
-                  Entra en Bandeja. El webhook solo se dispara al pasar a En curso con un bot.
+                  Entra en Bandeja. Si asignas un bot, se dispara el webhook enseguida.
                 </DialogDescription>
               </DialogHeader>
               <TaskForm

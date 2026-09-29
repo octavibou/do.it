@@ -8,6 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Bot, Project } from "@/lib/types";
 
+function secretHint(bot: Bot) {
+  if (bot.webhook_secret_last4) {
+    return `Configurada · ···${bot.webhook_secret_last4}`;
+  }
+  return "Sin configurar";
+}
+
 export function SettingsForm({ bots }: { bots: (Bot & { project: Project })[] }) {
   async function onSubmit(formData: FormData) {
     const result = await updateBotWebhookAction(formData);
@@ -42,6 +49,34 @@ export function SettingsForm({ bots }: { bots: (Bot & { project: Project })[] })
               defaultValue={bot.webhook_url ?? ""}
               placeholder="https://…"
             />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor={`secret-${bot.id}`}>Secreto (sender key)</Label>
+            <p className="text-xs text-muted-foreground">{secretHint(bot)}</p>
+            <Input
+              id={`secret-${bot.id}`}
+              name="webhookSecret"
+              type="password"
+              autoComplete="new-password"
+              placeholder="Dejar vacío para no cambiar"
+            />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <input type="checkbox" name="clearWebhookSecret" value="1" />
+              Quitar secreto
+            </label>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor={`header-${bot.id}`}>Header del secreto</Label>
+            <Input
+              id={`header-${bot.id}`}
+              name="webhookHeaderName"
+              defaultValue={bot.webhook_header_name ?? "Authorization"}
+              placeholder="Authorization"
+            />
+            <p className="text-xs text-muted-foreground">
+              <code>Authorization</code> envía <code>Bearer &lt;secreto&gt;</code>. Otro nombre
+              envía el secreto en crudo.
+            </p>
           </div>
           <div className="flex justify-end">
             <Button type="submit" variant="outline">

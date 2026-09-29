@@ -8,7 +8,7 @@ Backlog único de Octavi: proyectos, humanos y bots. Sustituye webhooks de Notio
 - Kanban por proyecto: **Bandeja | En curso | Revisión | Hecho** (arrastrar o botones)
 - Asignado `human` o `bot` (bot concreto)
 - Vista de trabajo de cada bot (tareas **En curso**)
-- Webhook al pasar a En curso si el asignado es un bot
+- Webhook `task.assigned` al asignar un bot (cualquier columna, Bandeja incluida)
 - Auth mínima: contraseña compartida (`APP_PASSWORD`)
 - Bot API: cada bot gestiona las tareas de **su proyecto** (listar, crear en Inbox, editar, mover estado, asignar, archivar) con `Authorization: Bearer <BOT_API_TOKEN>`
 
@@ -47,6 +47,7 @@ Aplica las migraciones en el editor SQL del proyecto Supabase `bxvhabbuxwsdwpfek
 2. **`supabase/migrations/002_v2_must_have.sql` — hay que ejecutarla a mano** (columnas `due_at`/`archived_at`, tablas `task_dependencies` y `task_events`)
 3. **`supabase/migrations/003_board_open_indexes.sql` — hay que ejecutarla a mano** (índices para abrir el tablero: tareas activas por proyecto, archivadas y dependencias por `blocker_task_id`). Sin ella la app funciona; las consultas del Kanban son más lentas.
 4. **`supabase/migrations/004_list_aggregates.sql` — hay que ejecutarla a mano** (función `active_task_status_counts()` para la home e índice de tareas en curso de bots). Sin ella la lista de proyectos usa el fallback fila a fila.
+5. **`supabase/migrations/005_bot_webhook_auth.sql` — hay que ejecutarla a mano** (secreto y header por bot, columnas de último envío, tabla `webhook_deliveries`). Sin ella la app no se cae: los POST salen sin auth y /bots no muestra último envío.
 
 El SQL crea tablas, RLS (sin políticas para `anon`/`authenticated`) y el seed:
 
@@ -57,7 +58,7 @@ El SQL crea tablas, RLS (sin políticas para `anon`/`authenticated`) y el seed:
 | Monetiza | Mint | `776da315-252f-4d4e-855f-a0c17be05120` |
 | Diselo | Dial | `64a98027-a9f3-4c87-afe6-51ae8e7512e5` |
 
-Las URL de webhook empiezan vacías. Edítalas en **Ajustes**.
+Las URL y el secreto de webhook empiezan vacíos. Edítalos en **Ajustes**. El secreto es de solo escritura (se muestra `configurada` y como mucho los 4 últimos caracteres). Prueba el POST desde **/bots**.
 
 ## Auth
 
@@ -67,43 +68,68 @@ Los bots (Flow, Home, Mint, Dial) llaman `/api/bots/*` con `Authorization: Beare
 
 Los datos de negocio solo se leen/escriben en el servidor con la service role. RLS está activo y no hay policies para el cliente.
 
-## Webhook `task.doing`
+## Webhook `task.assigned`
 
-Se dispara cuando (misma regla en la UI y en `PATCH` de la Bot API):
+Se dispara cuando el asignado **pasa a ser un bot** (misma regla en la UI, en `POST`/`PATCH` de la Bot API y al crear con asignado bot):
 
-1. el estado pasa a `doing`, y el asignado es `bot`, o
-2. el asignado pasa a `bot` mientras la tarea ya está en `doing`.
+- humano → bot
+- sin asignar → bot (creación)
+- bot A → bot B
 
-El POST va a `bots.webhook_url` del asignado, no del caller. Si un bot se autoasigna y mueve a `doing`, recibe su propio webhook; no se filtran auto-bucles.
+**No** se dispara si el asignado sigue siendo el mismo bot (solo cambian título, estado, etc.) ni si el asignado es humano.
 
-`POST` a `bots.webhook_url` con JSON:
+El evento antiguo `task.doing` **ya no se envía**. El bot recibe `task.assigned` (también en Bandeja), se mueve a En curso por la Bot API y empieza a trabajar. Así no hay doble disparo al entrar en `doing`.
+
+El POST va a `bots.webhook_url` del **nuevo** asignado, no del caller. Si Flow se autoasigna, Flow recibe el POST; no se filtran auto-bucles.
+
+### Headers
+
+| Header | Valor |
+| --- | --- |
+| `content-type` | `application/json` |
+| `accept` | `application/json` |
+| `user-agent` | `do.it-hub/1.0` |
+| auth (si hay secreto) | por defecto `Authorization: Bearer <secreto>` |
+
+Si el bot tiene un **nombre de header** distinto de `Authorization` (Ajustes), el secreto se envía en crudo en ese header (`X-Grok-Key: <secreto>`). Sin secreto (o sin migración 005) el POST sale sin auth.
+
+El secreto **nunca** viaja en el JSON, en la Bot API ni en componentes cliente.
+
+### Cuerpo
 
 ```json
 {
-  "event": "task.doing",
+  "event": "task.assigned",
+  "event_id": "9f1c…",
+  "sent_at": "2026-09-29T08:00:00.000Z",
   "task": {
     "id": "…",
     "project_id": "…",
     "title": "…",
     "description": null,
-    "status": "doing",
+    "status": "inbox",
     "assignee_type": "bot",
     "bot_id": "7d765d6a-63aa-4d4d-9914-0b3d26dee739",
     "priority": "high",
+    "due_at": null,
     "created_at": "…",
     "updated_at": "…",
-    "started_at": "…"
+    "started_at": null
   },
   "project": { "id": "…", "slug": "leadflow", "name": "Leadflow" },
-  "bot": { "id": "…", "name": "Flow", "project_id": "…" }
+  "bot": { "id": "…", "name": "Flow", "project_id": "…" },
+  "previous_assignee": { "assignee_type": "human", "bot_id": null }
 }
 ```
 
+`webhook.test` (botón **Probar webhook** en `/bots`) usa la misma forma: `event` = `webhook.test`, `task` = `null`, `previous_assignee` = `null`.
+
 Si el POST falla (red, timeout 10s, HTTP no 2xx) o no hay URL:
 
-- la tarea **sigue en En curso**
+- la tarea **sigue asignada** (el cambio de usuario no se revierte)
 - el error se guarda en `tasks.webhook_error` y se muestra en la tarjeta
-- se puede reintentar desde la UI
+- el último envío (evento, tarea, HTTP o excerpt) queda en el bot y en `/bots`
+- se puede reintentar desde la tarjeta (vuelve a enviar `task.assigned`)
 
 Si el POST va bien, se limpia el error y se guarda `webhook_fired_at`.
 
@@ -129,7 +155,7 @@ PATCH /api/bots/:id/tasks/:taskId
 
 `status` es opcional (lista separada por comas: `inbox|doing|review|done`). `include_archived` vale `false` por defecto.
 
-`POST` crea una tarea en el proyecto del bot. Campos JSON: `title` (obligatorio), `description`, `priority` (`low|medium|high|urgent`), `due_at` (ISO o `null`). Por defecto `status=inbox`, `assignee_type=human`, `bot_id=null`. Se puede asignar a **este** bot con `assignee_type=bot` y/o `bot_id` igual al `:id` del path. Rechaza `status` distinto de `inbox`, archivo, otro proyecto u otro bot. Escribe `task_events` con `action=create` y `actor=bot:<nombre>`. No dispara webhook `task.doing`.
+`POST` crea una tarea en el proyecto del bot. Campos JSON: `title` (obligatorio), `description`, `priority` (`low|medium|high|urgent`), `due_at` (ISO o `null`). Por defecto `status=inbox`, `assignee_type=human`, `bot_id=null`. Se puede asignar a **este** bot con `assignee_type=bot` y/o `bot_id` igual al `:id` del path. Rechaza `status` distinto de `inbox`, archivo, otro proyecto u otro bot. Escribe `task_events` con `action=create` y `actor=bot:<nombre>`. Si el asignado es un bot, dispara `task.assigned`.
 
 Si el título es muy parecido a una tarea abierta del mismo proyecto (misma regla anti-dup que la UI), responde **409** con `duplicates`. No hay `forceCreate` por API: usa GET/PATCH de la existente.
 
@@ -150,7 +176,7 @@ Campos desconocidos → **400**. Valores de enum inválidos → **400**. Tarea d
 
 Los `task_events` usan las mismas `action` que la UI (`status_change`, `assignee_change`, `priority_change`, `update`, `archive`) con `actor=bot:<nombre>`.
 
-Webhook `task.doing`: un PATCH que deja la tarea en `doing` con asignado `bot` dispara el mismo webhook que la UI (`shouldDispatchDoingWebhook`: entra en `doing` o el asignado pasa a `bot` estando ya en `doing`). Si Flow se asigna la tarea y la mueve a `doing`, Flow recibe el POST; **no** se suprimen auto-bucles. CREATE sigue sin disparar webhook (siempre Inbox).
+Webhook `task.assigned`: un PATCH o POST que **cambia** el asignado a un bot dispara el mismo webhook que la UI (`shouldDispatchAssignedWebhook`). Mover a `doing` sin cambiar de bot **no** vuelve a disparar. Si Flow se asigna la tarea, Flow recibe el POST; **no** se suprimen auto-bucles. Las respuestas JSON de la Bot API no incluyen `webhook_url` ni el secreto.
 
 Ejemplos:
 
